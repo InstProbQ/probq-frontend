@@ -784,6 +784,24 @@ function closeTTModal(){$('ttModal').classList.remove('open');document.body.styl
 window.openTTModal=openTTModal;window.closeTTModal=closeTTModal;
 
 /* ═══════════════════════════════════
+   MOBILE MORE DRAWER
+═══════════════════════════════════ */
+function toggleMobMore(){
+  const drawer=document.getElementById('mobMoreDrawer');
+  const overlay=document.getElementById('mobMoreOverlay');
+  const isOpen=drawer.classList.contains('open');
+  if(isOpen){closeMobMore();}
+  else{drawer.classList.add('open');overlay.classList.add('open');document.body.style.overflow='hidden';}
+}
+function closeMobMore(){
+  document.getElementById('mobMoreDrawer')?.classList.remove('open');
+  document.getElementById('mobMoreOverlay')?.classList.remove('open');
+  document.body.style.overflow='';
+}
+window.toggleMobMore=toggleMobMore;
+window.closeMobMore=closeMobMore;
+
+/* ═══════════════════════════════════
    BOOKMARKS
 ═══════════════════════════════════ */
 window._bm=function(id){
@@ -1681,6 +1699,16 @@ tbody tr:hover td{background:var(--bg);}
 .mob-nav-label{font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.3px;}
 .mob-nav-post{background:var(--am);border-radius:14px;padding:.5rem .4rem;color:#fff !important;margin-top:-16px;box-shadow:0 4px 16px rgba(180,130,63,.45);}
 .mob-nav-plus{font-size:1.5rem;font-weight:300;}
+.mob-more-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:299;backdrop-filter:blur(2px);}
+.mob-more-overlay.open{display:block;}
+.mob-more-drawer{position:fixed;bottom:-100%;left:0;right:0;z-index:300;background:var(--card);border-radius:20px 20px 0 0;padding:1rem 1rem calc(1rem + env(safe-area-inset-bottom));box-shadow:0 -8px 32px rgba(0,0,0,.2);transition:bottom .32s cubic-bezier(.4,0,.2,1);}
+.mob-more-drawer.open{bottom:0;}
+.mob-more-handle{width:36px;height:4px;background:var(--cb);border-radius:2px;margin:0 auto .9rem;}
+.mob-more-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:.5rem;}
+.mob-more-item{display:flex;flex-direction:column;align-items:center;gap:.3rem;background:var(--bg2);border:1px solid var(--cb);border-radius:12px;padding:.7rem .4rem;cursor:pointer;transition:all .18s;}
+.mob-more-item:active{background:var(--amb);color:#fff;transform:scale(.96);}
+.mob-more-icon{font-size:1.4rem;line-height:1;}
+.mob-more-label{font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:var(--ink2);}
 @media(max-width:768px){
   .mob-nav{display:grid;}
   .fab{display:none !important;}
@@ -2251,13 +2279,45 @@ input[type="hidden"]{display:none;}
   <button class="mob-nav-item mob-nav-post" onclick="openModal()">
     <span class="mob-nav-icon mob-nav-plus">＋</span><span class="mob-nav-label">Post</span>
   </button>
-  <button class="mob-nav-item" id="mobnav_revision" onclick="page('revision');setMobNav('revision')">
-    <span class="mob-nav-icon">🃏</span><span class="mob-nav-label">Revise</span>
+  <button class="mob-nav-item" id="mobnav_timetable" onclick="page('timetable');setMobNav('timetable')">
+    <span class="mob-nav-icon">📅</span><span class="mob-nav-label">Timetable</span>
   </button>
-  <button class="mob-nav-item" id="mobnav_profile" onclick="page('profile');setMobNav('profile')">
-    <span class="mob-nav-icon">👤</span><span class="mob-nav-label">Profile</span>
+  <button class="mob-nav-item" id="mobnav_more" onclick="toggleMobMore()">
+    <span class="mob-nav-icon">☰</span><span class="mob-nav-label">More</span>
   </button>
 </nav>
+
+<!-- MOBILE MORE DRAWER -->
+<div class="mob-more-overlay" id="mobMoreOverlay" onclick="closeMobMore()"></div>
+<div class="mob-more-drawer" id="mobMoreDrawer">
+  <div class="mob-more-handle"></div>
+  <div class="mob-more-grid">
+    <button class="mob-more-item" onclick="page('revision');setMobNav('revision');closeMobMore()">
+      <span class="mob-more-icon">🃏</span><span class="mob-more-label">Revise</span>
+    </button>
+    <button class="mob-more-item" onclick="page('analytics');setMobNav('analytics');closeMobMore()">
+      <span class="mob-more-icon">📊</span><span class="mob-more-label">Analytics</span>
+    </button>
+    <button class="mob-more-item" onclick="page('bookmarks');setMobNav('bookmarks');closeMobMore()">
+      <span class="mob-more-icon">🔖</span><span class="mob-more-label">Saved</span>
+    </button>
+    <button class="mob-more-item" onclick="page('history');setMobNav('history');closeMobMore()">
+      <span class="mob-more-icon">📜</span><span class="mob-more-label">History</span>
+    </button>
+    <button class="mob-more-item" onclick="page('pdf');setMobNav('pdf');closeMobMore()">
+      <span class="mob-more-icon">📄</span><span class="mob-more-label">PDF</span>
+    </button>
+    <button class="mob-more-item" onclick="page('profile');setMobNav('profile');closeMobMore()">
+      <span class="mob-more-icon">👤</span><span class="mob-more-label">Profile</span>
+    </button>
+    <button class="mob-more-item" onclick="page('about');setMobNav('about');closeMobMore()">
+      <span class="mob-more-icon">ℹ️</span><span class="mob-more-label">About</span>
+    </button>
+    <button class="mob-more-item" onclick="window._toggleDark();closeMobMore()">
+      <span class="mob-more-icon" id="mobDarkIcon">🌙</span><span class="mob-more-label">Theme</span>
+    </button>
+  </div>
+</div>
 
 <!-- FAB (desktop only) -->
 <button class="fab" id="fab" onclick="openModal()"><span style="font-size:1rem">&#65291;</span> Post Question</button>
