@@ -1,0 +1,2312 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
+<meta name="theme-color" content="#1a1610"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-title" content="ProbQ"/>
+<meta name="description" content="Amrutvahini COE — Student Exam Intelligence. Questions, Notes, Timetable, AI Answers."/>
+<link rel="manifest" href="data:application/json,{&quot;name&quot;:&quot;ProbQ 2026&quot;,&quot;short_name&quot;:&quot;ProbQ&quot;,&quot;start_url&quot;:&quot;/&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;%23faf7f2&quot;,&quot;theme_color&quot;:&quot;%231a1610&quot;,&quot;icons&quot;:[{&quot;src&quot;:&quot;https://via.placeholder.com/192/b4823f/fff?text=PQ&quot;,&quot;sizes&quot;:&quot;192x192&quot;,&quot;type&quot;:&quot;image/png&quot;}]}"/>
+<title>ProbQ 2026 — Amrutvahini COE</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%231a1610'/><text y='72' x='50' text-anchor='middle' font-size='62' font-family='Georgia,serif' fill='%23b4823f' font-weight='900'>P</text><text y='72' x='72' text-anchor='middle' font-size='62' font-family='Georgia,serif' fill='%23ffffff' font-weight='400'>Q</text></svg>"/>
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%231a1610'/><text y='72' x='50' text-anchor='middle' font-size='62' font-family='Georgia,serif' fill='%23b4823f' font-weight='900'>P</text><text y='72' x='72' text-anchor='middle' font-size='62' font-family='Georgia,serif' fill='%23ffffff' font-weight='400'>Q</text></svg>"/>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;0,900;1,600&family=Source+Sans+3:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
+  onAuthStateChanged, signOut, updateProfile, sendPasswordResetEmail
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, collection, doc, addDoc, setDoc, getDoc, getDocs,
+  updateDoc, deleteDoc, onSnapshot, query, orderBy, where, limit,
+  increment, serverTimestamp, arrayUnion, arrayRemove
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getStorage } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
+
+/* ═══════════════════════════════════
+   FIREBASE CONFIG
+═══════════════════════════════════ */
+const firebaseConfig = {
+  apiKey: "AIzaSyDoIkkoKyA4n4VqURwBu49DYQNrcmx9dXc",
+  authDomain: "instiprobq.firebaseapp.com",
+  projectId: "instiprobq",
+  storageBucket: "instiprobq.firebasestorage.app",
+  messagingSenderId: "1078982262525",
+  appId: "1:1078982262525:web:05e3872bc0692b61b88894"
+};
+const SUPER_ADMIN_EMAIL = "amrutvahini4@gmail.com";
+const CLOUDINARY_CLOUD = 'dxacw46pq';
+const CLOUDINARY_PRESET = 'ldbmibvj';
+const AI_BACKEND = 'https://probq-backend.vercel.app'; // Vercel AI backend
+
+// Cloudinary upload helper — free 25GB storage
+async function uploadToCloudinary(file, folder) {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('upload_preset', CLOUDINARY_PRESET);
+  formData.append('folder', 'probq/' + folder);
+  const res = await fetch('https://api.cloudinary.com/v1_1/' + CLOUDINARY_CLOUD + '/auto/upload', {
+    method: 'POST',
+    body: formData
+  });
+  if (!res.ok) throw new Error('Upload failed');
+  const data = await res.json();
+  return data.secure_url;
+}
+
+const app     = initializeApp(firebaseConfig);
+const auth    = getAuth(app);
+const db      = getFirestore(app);
+const storage = getStorage(app); // kept for compatibility
+
+/* ═══════════════════════════════════
+   STATE
+═══════════════════════════════════ */
+let currentUser  = null, isAdmin = false;
+let allQuestions = [], allNotes = [], allTimetables = [];
+let bookmarks    = JSON.parse(localStorage.getItem('pq_bm')||'[]');
+let darkMode     = localStorage.getItem('pq_dark')==='true';
+let topicChart   = null, subjectChart = null;
+let EXAM_DATE    = new Date("2026-04-15T09:00:00");
+let flashIdx=0, flashCards=[], qotdQ=null, pinnedIds=[];
+let userProfile  = JSON.parse(localStorage.getItem('pq_profile')||'{}');
+const $          = id => document.getElementById(id);
+
+/* ═══════════════════════════════════
+   THEME
+═══════════════════════════════════ */
+function applyTheme(){document.documentElement.setAttribute('data-theme',darkMode?'dark':'light');const b=$('darkToggle');if(b)b.textContent=darkMode?'☀️':'🌙';}
+function setMobNav(p){
+  document.querySelectorAll('.mob-nav-item').forEach(el=>el.classList.remove('active'));
+  const el=document.getElementById('mobnav_'+p);
+  if(el) el.classList.add('active');
+}
+window._toggleDark=()=>{darkMode=!darkMode;localStorage.setItem('pq_dark',darkMode);applyTheme();};
+applyTheme();
+
+/* ═══════════════════════════════════
+   COUNTDOWN
+═══════════════════════════════════ */
+function updateCountdown(){
+  const el=$('countdown');if(!el)return;
+  const diff=EXAM_DATE-new Date();
+  if(diff<=0){el.innerHTML='<span class="cd-fire">📝 Exam time! All the best!</span>';return;}
+  const d=Math.floor(diff/86400000),h=Math.floor((diff%86400000)/3600000),
+        m=Math.floor((diff%3600000)/60000),s=Math.floor((diff%60000)/1000);
+  el.innerHTML=`<span class="cd-unit"><b class="cd-n">${d}</b><small>days</small></span>
+    <span class="cd-sep">:</span><span class="cd-unit"><b class="cd-n">${String(h).padStart(2,'0')}</b><small>hrs</small></span>
+    <span class="cd-sep">:</span><span class="cd-unit"><b class="cd-n">${String(m).padStart(2,'0')}</b><small>min</small></span>
+    <span class="cd-sep">:</span><span class="cd-unit"><b class="cd-n">${String(s).padStart(2,'0')}</b><small>sec</small></span>`;
+}
+setInterval(updateCountdown,1000);
+
+/* ═══════════════════════════════════
+   AUTH
+═══════════════════════════════════ */
+onAuthStateChanged(auth,user=>{
+  currentUser=user;isAdmin=user?.email===SUPER_ADMIN_EMAIL;
+  syncNavUI();renderFeed();renderBookmarks();
+  if(user) loadUserProfile();
+});
+
+function syncNavUI(){
+  const u=currentUser;
+  $('navUser').innerHTML=u
+    ?`<div class="nav-pill"><div class="av">${(u.displayName||u.email)[0].toUpperCase()}</div>
+       <span class="nav-uname">${u.displayName||u.email.split('@')[0]}</span>
+       <button class="lbtn" onclick="window._signOut()">Sign out</button></div>`
+    :`<button class="btn btn-ghost" onclick="page('auth')">Sign in</button>
+      <button class="btn btn-amber" onclick="page('signup')">Join Free</button>`;
+  $('fab').style.display=u?'flex':'none';
+  $('navAdmin').style.display=isAdmin?'block':'none';
+  $('navBm').style.display=u?'block':'none';
+  $('navProfile').style.display=u?'block':'none';
+}
+
+/* Password toggle helper */
+window._togglePass=function(inputId,btn){
+  const inp=$(inputId);
+  if(inp.type==='password'){inp.type='text';btn.textContent='🙈';}
+  else{inp.type='password';btn.textContent='👁';}
+};
+
+window._signUp=async function(){
+  const name=$('suName').value.trim(),roll=$('suRoll').value.trim();
+  const email=$('suEmail').value.trim().toLowerCase();
+  const pass=$('suPass').value,pass2=$('suPass2').value;
+  const year=$('suYear').value,sem=$('suSem').value,div=$('suDiv').value.trim().toUpperCase();
+  if(!name){toast('Enter your full name','warn');return;}
+  if(!email||!email.includes('@')){toast('Enter a valid email','warn');return;}
+  if(!pass||pass.length<6){toast('Password must be 6+ characters','warn');return;}
+  if(pass!==pass2){toast('Passwords do not match','warn');return;}
+  if(!year||!sem){toast('Please select your Year and Semester','warn');return;}
+  const btn=$('suBtn');btn.disabled=true;btn.textContent='Creating…';
+  try{
+    const cred=await createUserWithEmailAndPassword(auth,email,pass);
+    const displayName=roll||name;
+    await updateProfile(cred.user,{displayName});
+    const profile={name,roll,email,year,sem,division:div,pts:0,posts:0,joinedAt:serverTimestamp()};
+    await setDoc(doc(db,'users',cred.user.uid),profile);
+    userProfile={year,sem,division:div,name,roll};
+    localStorage.setItem('pq_profile',JSON.stringify(userProfile));
+    toast('Welcome to ProbQ, '+name+'! 🎓','success');page('home');
+  }catch(e){
+    const m=e.code==='auth/email-already-in-use'?'Email already registered — sign in instead'
+      :e.code==='auth/weak-password'?'Password too weak':e.message.replace('Firebase:','').trim();
+    toast(m,'error');
+  }
+  btn.disabled=false;btn.textContent='Create Account →';
+};
+
+window._signIn=async function(){
+  const email=$('siEmail').value.trim().toLowerCase(),pass=$('siPass').value;
+  if(!email||!pass){toast('Enter email and password','warn');return;}
+  const btn=$('siBtn');btn.disabled=true;btn.textContent='Signing in…';
+  try{
+    await signInWithEmailAndPassword(auth,email,pass);
+    toast('Welcome back! 👋','success');page('home');
+  }catch(e){
+    const m=e.code==='auth/invalid-credential'?'Incorrect email or password'
+      :e.code==='auth/too-many-requests'?'Too many attempts — wait a moment':'Sign in failed';
+    toast(m,'error');
+  }
+  btn.disabled=false;btn.textContent='Sign In';
+};
+
+window._signOut=async()=>{await signOut(auth);toast('Signed out 📚','info');page('home');};
+
+window._forgotPassword=async function(){
+  const email=$('forgotEmail').value.trim().toLowerCase();
+  if(!email||!email.includes('@')){toast('Enter your registered email','warn');return;}
+  const btn=$('forgotBtn');btn.disabled=true;btn.textContent='Sending…';
+  try{
+    await sendPasswordResetEmail(auth,email);
+    $('forgotSuccess').style.display='block';
+    $('forgotEmail').value='';
+    toast('Reset email sent! Check your inbox 📧','success');
+  }catch(e){
+    const m=e.code==='auth/user-not-found'?'No account found with this email.'
+      :e.code==='auth/invalid-email'?'Please enter a valid email address.'
+      :e.code==='auth/too-many-requests'?'Too many attempts. Please wait a moment.'
+      :'Failed to send reset email. Try again.';
+    toast(m,'error');
+  }
+  btn.disabled=false;btn.textContent='Send Reset Link';
+};
+
+/* Load user profile from Firestore */
+async function loadUserProfile(){
+  if(!currentUser)return;
+  try{
+    const snap=await getDoc(doc(db,'users',currentUser.uid));
+    if(snap.exists()){
+      const d=snap.data();
+      userProfile={year:d.year,sem:d.sem,division:d.division,name:d.name,roll:d.roll};
+      localStorage.setItem('pq_profile',JSON.stringify(userProfile));
+      // Apply profile filter to feed
+      if(userProfile.year) renderFeed();
+    }
+  }catch(e){}
+}
+
+/* ═══════════════════════════════════
+   PAGE ROUTER
+═══════════════════════════════════ */
+let currentPage='home';
+window.page=function(p){
+  if(p==='admin'&&!isAdmin){toast('Admin access restricted','warn');return;}
+  if(['bookmarks','profile','revision','analytics','notes','timetable'].includes(p)&&!currentUser){page('auth');return;}
+  currentPage=p;
+  document.querySelectorAll('.page').forEach(el=>el.hidden=true);
+  const t=$(p+'Page');if(t)t.hidden=false;
+  document.querySelectorAll('.nav-link').forEach(el=>el.classList.remove('active'));
+  const nl=$('nav_'+p);if(nl)nl.classList.add('active');
+  window.scrollTo(0,0);
+  closeModal();closeCmt();closeReport();
+  if(p==='admin')renderAdminPage();
+  if(p==='bookmarks')renderBookmarks();
+  if(p==='profile')renderProfile();
+  if(p==='revision')startRevision();
+  if(p==='analytics')renderAnalytics();
+  if(p==='notes')renderNotes();
+  if(p==='timetable')renderTimetable();
+};
+
+/* ═══════════════════════════════════
+   REALTIME LISTENERS
+═══════════════════════════════════ */
+function bootListeners(){
+  // Offline cache
+  try{const cached=localStorage.getItem('pq_cache');if(cached){allQuestions=JSON.parse(cached);renderFeed();refreshSidebar();renderHistory();updateQOTD();}}catch(e){}
+
+  // Questions
+  onSnapshot(query(collection(db,'questions'),orderBy('repeatCount','desc')),snap=>{
+    allQuestions=snap.docs.map(d=>({id:d.id,...d.data()}));
+    try{localStorage.setItem('pq_cache',JSON.stringify(allQuestions.map(q=>({id:q.id,text:q.text,year:q.year,branch:q.branch,subject:q.subject,topic:q.topic,examType:q.examType,answer:q.answer,tags:q.tags,repeatCount:q.repeatCount,upvotes:q.upvotes||[],commentCount:q.commentCount||0,verified:q.verified,anonymous:q.anonymous,postedBy:q.postedBy,difficulty:q.difficulty,aiAnswer:q.aiAnswer,aiChecked:q.aiChecked}))));}catch(e){}
+    renderFeed();refreshChart();refreshSidebar();updateQOTD();renderHistory();
+    if(currentPage==='admin')renderAdminPage();
+    if(currentPage==='bookmarks')renderBookmarks();
+    if(currentPage==='analytics')renderAnalytics();
+  });
+
+  // Notes
+  onSnapshot(query(collection(db,'notes'),orderBy('createdAt','desc')),snap=>{
+    allNotes=snap.docs.map(d=>({id:d.id,...d.data()}));
+    if(currentPage==='notes')renderNotes();
+  });
+
+  // Timetables
+  onSnapshot(collection(db,'timetables'),snap=>{
+    allTimetables=snap.docs.map(d=>({id:d.id,...d.data()}));
+    if(currentPage==='timetable')renderTimetable();
+  });
+
+  // Settings
+  getDoc(doc(db,'settings','main')).then(snap=>{
+    if(!snap.exists())setDoc(doc(db,'settings','main'),{examDate:'2026-04-15T09:00:00',examLabel:'Endsem Countdown',announcement:'',announcementActive:false,pinned:[]});
+  });
+  onSnapshot(doc(db,'settings','main'),snap=>{
+    if(!snap.exists())return;
+    const d=snap.data();
+    if(d.examDate){EXAM_DATE=new Date(d.examDate);updateCountdown();}
+    if(d.examLabel){const l=$('cdLabel');if(l)l.textContent=d.examLabel+':';}
+    pinnedIds=d.pinned||[];
+    renderAnnouncement(d.announcement||'',d.announcementActive||false);
+    if(isAdmin)prefillAdminSettings(d);
+  });
+}
+
+/* ═══════════════════════════════════
+   ANNOUNCEMENT
+═══════════════════════════════════ */
+function renderAnnouncement(text,active){
+  const el=$('announcementBar');if(!el)return;
+  if(active&&text){el.style.display='flex';$('announcementText').textContent=text;}
+  else el.style.display='none';
+}
+window._closeAnnouncement=()=>{$('announcementBar').style.display='none';};
+
+/* ═══════════════════════════════════
+   QOTD
+═══════════════════════════════════ */
+function updateQOTD(){
+  if(!allQuestions.length)return;
+  const high=allQuestions.filter(q=>q.repeatCount>=3);
+  const pool=high.length?high:allQuestions;
+  const idx=Math.floor((new Date().getDate()+new Date().getMonth())%pool.length);
+  qotdQ=pool[idx];
+  const el=$('qotdCard');if(!el||!qotdQ)return;
+  const prob=Math.min(100,Math.round((qotdQ.repeatCount/12)*100));
+  el.innerHTML=`<div class="qotd-label">⭐ Question of the Day</div>
+    <div class="qotd-chips"><span class="chip chip-yr">${qotdQ.year||'—'}</span>
+    <span class="chip chip-br">${qotdQ.branch||'—'}</span>
+    ${qotdQ.subject?`<span class="chip chip-ex">${qotdQ.subject}</span>`:''}</div>
+    <div class="qotd-text">${(qotdQ.text||'').substring(0,200)}</div>
+    <div class="qotd-foot"><span class="qotd-prob">${prob}% probable</span><span class="qotd-rep">🔁 ${qotdQ.repeatCount} repeats</span></div>`;
+}
+
+/* ═══════════════════════════════════
+   RENDER FEED
+═══════════════════════════════════ */
+function renderFeed(filter){
+  filter=filter||{};
+  let qs=[...allQuestions];
+
+  // AUTO-FILTER by user's year if set and no manual year filter
+  if(!filter.year&&userProfile.year&&!filter.search&&!filter.week){
+    qs=qs.filter(q=>q.year===userProfile.year);
+  }
+
+  const pinned=qs.filter(q=>pinnedIds.includes(q.id));
+  const unpinned=qs.filter(q=>!pinnedIds.includes(q.id));
+  qs=[...pinned,...unpinned];
+
+  if(filter.year)    qs=qs.filter(q=>q.year===filter.year);
+  if(filter.branch)  qs=qs.filter(q=>q.branch===filter.branch);
+  if(filter.subject) qs=qs.filter(q=>(q.subject||'').toLowerCase().includes(filter.subject.toLowerCase()));
+  if(filter.diff)    qs=qs.filter(q=>q.difficulty===filter.diff);
+  if(filter.search){
+    const s=filter.search.toLowerCase().trim();
+    const words=s.split(/\s+/).filter(Boolean);
+    qs=qs.filter(q=>{
+      const hay=((q.text||'')+(q.tags||'')+(q.topic||'')+(q.subject||'')+(q.branch||'')+(q.year||'')).toLowerCase();
+      return words.every(w=>hay.includes(w));
+    });
+    qs.sort((a,b)=>{
+      const hA=((a.text||'')+(a.tags||'')+(a.topic||'')+(a.subject||'')).toLowerCase();
+      const hB=((b.text||'')+(b.tags||'')+(b.topic||'')+(b.subject||'')).toLowerCase();
+      return words.filter(w=>hB.includes(w)).length - words.filter(w=>hA.includes(w)).length;
+    });
+  }
+  if(filter.week){const cutoff=Date.now()-7*86400000;qs=qs.filter(q=>q.createdAt?.toMillis()>cutoff);}
+
+  const sortBy=filter.sort||'repeats';
+  if(sortBy==='newest')qs.sort((a,b)=>(b.createdAt?.toMillis()||0)-(a.createdAt?.toMillis()||0));
+  else if(sortBy==='upvotes')qs.sort((a,b)=>(b.upvotes?.length||0)-(a.upvotes?.length||0));
+  else if(sortBy==='discussed')qs.sort((a,b)=>(b.commentCount||0)-(a.commentCount||0));
+  else qs.sort((a,b)=>{const ap=pinnedIds.includes(a.id)?1:0,bp=pinnedIds.includes(b.id)?1:0;if(bp!==ap)return bp-ap;return(b.repeatCount||1)-(a.repeatCount||1);});
+
+  const grid=$('feedGrid');if(!grid)return;
+  if(!qs.length){grid.innerHTML='<div class="empty-state"><span>📭</span><p>No questions found. Try changing the filter or be the first to post!</p></div>';return;}
+
+  grid.innerHTML=qs.map(function(q,i){
+    const prob=Math.min(100,Math.round((q.repeatCount/12)*100));
+    const hl=q.repeatCount>=8?3:q.repeatCount>=5?2:q.repeatCount>=3?1:0;
+    const btext=['','🔥 Hot','⚡ Very Likely','💯 Sure Shot'];
+    const bcls=['','badge-hot','badge-high','badge-sure'];
+    const isBm=bookmarks.includes(q.id);
+    const upvotes=(q.upvotes||[]).length;
+    const userUp=currentUser&&(q.upvotes||[]).includes(currentUser.uid);
+    const isPinned=pinnedIds.includes(q.id);
+    const safe=t=>(t||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const diffCls={Easy:'chip-easy',Medium:'chip-med',Hard:'chip-hard'};
+    // Answer display: user answer OR ai answer
+    const displayAnswer=q.answer||(q.aiAnswer?'[AI] '+q.aiAnswer:'');
+    const ansWords=displayAnswer?displayAnswer.split(' ').length:0;
+  const readSec=Math.max(15,Math.round(ansWords/3));
+  const readLabel=readSec<60?readSec+'s read':Math.round(readSec/60)+'min read';
+  const ansLabel=q.answer?(q.aiChecked?'💡 Answer <span class="ai-check">✅ AI Verified</span> <span class="read-time">·'+readLabel+'</span>':'💡 Answer <span class="read-time">·'+readLabel+'</span>'):'🤖 AI Answer <span class="read-time">·'+readLabel+'</span>';
+    const probCls = prob>=70?' qcard-prob-high':prob>=40?' qcard-prob-med':' qcard-prob-low';
+    return `<article class="qcard${isPinned?' qcard-pinned':i<3?' qcard-feat':''}${q.verified?' qcard-verified':''}${probCls}">
+      ${isPinned?'<div class="pin-tag">📌 Pinned</div>':''}
+      <div class="qcard-head">
+        <div class="chips">
+          <span class="chip chip-yr">${q.year||'—'}</span>
+          <span class="chip chip-br">${q.branch||'—'}</span>
+          ${q.examType?`<span class="chip chip-ex">${q.examType}</span>`:''}
+          ${q.difficulty?`<span class="chip ${diffCls[q.difficulty]||'chip-ex'}">${q.difficulty}</span>`:''}
+          ${q.verified?'<span class="chip chip-vf">✅ Verified</span>':''}
+          ${q.anonymous?'<span class="chip chip-anon">🕵️ Anon</span>':''}
+        </div>
+        <div style="display:flex;gap:.3rem;align-items:center">
+          ${hl?`<span class="badge ${bcls[hl]}">${btext[hl]}</span>`:''}
+          <button class="bmbtn${isBm?' bm-on':''}" onclick="window._bm('${q.id}')">${isBm?'🔖':'🏷️'}</button>
+        </div>
+      </div>
+      <h3 class="qtext">${safe(q.text)}</h3>
+      ${q.topic?`<div class="qmeta">Topic: <em>${safe(q.topic)}</em></div>`:''}
+      ${q.subject?`<div class="qmeta">📘 ${safe(q.subject)}</div>`:''}
+      ${displayAnswer?`<div class="qans-wrap">
+        <div class="qans-header" onclick="window._toggleAns(this)">
+          <span>${ansLabel}</span><span class="qans-chevron">▼</span>
+        </div>
+        <div class="qans-body" style="display:none">
+          <div class="qans-preview">${safe((displayAnswer.replace('[AI] ','')).substring(0,120))}${displayAnswer.length>120?'…':''}</div>
+          <div class="qans-full" style="display:none">${safe(displayAnswer.replace('[AI] ',''))}</div>
+          ${displayAnswer.length>120?`<button class="qans-more" onclick="window._expandAns(this)">Read full answer ▼</button>`:''}
+        </div>
+      </div>`:''}
+      ${!q.answer&&!q.aiAnswer?`<button class="ai-gen-btn" onclick="window._generateAIAnswer('${q.id}')">🤖 Generate AI Answer</button>`:''}
+      ${q.tags?`<div class="qtags">${q.tags.split(',').map(t=>`<span class="tag">${t.trim()}</span>`).join('')}</div>`:''}
+      <div class="qfoot">
+        <div class="meter">
+          <span class="mnum">${q.repeatCount||1}</span>
+          <div class="mbar"><div class="mfill" style="width:${prob}%"></div></div>
+          <span class="mpct">${prob}%</span>
+        </div>
+        <div class="qacts">
+          ${currentUser?`<button class="abtn abtn-rep" onclick="window._repeat('${q.id}')">▲ Repeat</button>`:''}
+          <button class="abtn abtn-up${userUp?' abtn-up-on':''}" onclick="window._upvote('${q.id}')">👍 ${upvotes}</button>
+          <button class="abtn abtn-cmt" onclick="window._openCmt('${q.id}')">💬 ${q.commentCount||0}</button>
+          <button class="abtn abtn-rep" onclick="window._reportQ('${q.id}')">🚩</button>
+          <button class="abtn abtn-wa" onclick="window._shareWA('${q.id}')" title="Share on WhatsApp">📤</button>
+          <button class="abtn abtn-exam" onclick="window._confirmedInExam('${q.id}')" title="This appeared in exam!">📝 ${(q.confirmedCount||0)>0?(q.confirmedCount+' ✓'):'In Exam?'}</button>
+          ${isAdmin?`<button class="abtn abtn-ed" onclick="window._editQ('${q.id}')">✏</button>
+            <button class="abtn abtn-dl" onclick="window._deleteQ('${q.id}')">🗑</button>
+            ${!q.verified?`<button class="abtn abtn-vf" onclick="window._verify('${q.id}')">✅</button>`:''}
+            ${!isPinned?`<button class="abtn abtn-pin" onclick="window._pin('${q.id}')">📌</button>`:`<button class="abtn abtn-pin" onclick="window._unpin('${q.id}')">📍</button>`}`:''}
+        </div>
+      </div>
+      <div class="qposter">by ${q.anonymous?'Anonymous':safe(q.postedBy||'unknown')} · ${timeAgo(q.createdAt)}</div>
+    </article>`;
+  }).join('');
+}
+
+/* ═══════════════════════════════════
+   AI ANSWER GENERATION
+═══════════════════════════════════ */
+window._generateAIAnswer=async function(qid){
+  // Find question — qid can be null if called right after posting
+  const q = qid ? allQuestions.find(x=>x.id===qid) : null;
+  if(qid && !q) return;
+  if(!qid) return; // safety guard for post-submit call
+
+  // Check backend URL is configured
+  if(!AI_BACKEND || AI_BACKEND==='YOUR_VERCEL_URL'){
+    toast('AI backend not configured yet. See README to deploy.','warn');
+    return;
+  }
+
+  // Find button and disable it
+  const btns = document.querySelectorAll(`[onclick*="_generateAIAnswer('${qid}')"]`);
+  btns.forEach(b=>{b.disabled=true;b.textContent='🤖 Generating…';});
+
+  try{
+    const res = await fetch(AI_BACKEND+'/api/ai-answer',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        text: q.text,
+        subject: q.subject||'Engineering',
+        topic: q.topic||'General',
+        year: q.year||'BE',
+        answer: q.answer||''
+      })
+    });
+
+    if(!res.ok){
+      const err=await res.json().catch(()=>({}));
+      throw new Error(err.error||'Backend error '+res.status);
+    }
+
+    const data = await res.json();
+    const { aiAnswer, aiChecked } = data;
+
+    if(aiAnswer){
+      const update = { aiAnswer, aiAnswerAt: serverTimestamp() };
+      if(aiChecked) update.aiChecked = true;
+      await updateDoc(doc(db,'questions',qid), update);
+      toast('AI answer generated! 🤖','success');
+    } else {
+      toast('AI could not generate an answer for this question.','warn');
+    }
+  }catch(e){
+    console.error('AI error:',e);
+    toast('AI error: '+e.message,'error');
+  }
+
+  btns.forEach(b=>{b.disabled=false;b.textContent='🤖 Generate AI Answer';});
+};
+
+/* ═══════════════════════════════════
+   NOTES
+═══════════════════════════════════ */
+function renderNotes(){
+  const g=$('notesGrid');if(!g)return;
+  let notes=[...allNotes];
+  const fy=$('noteFilterYear')?.value||'';
+  const fb=$('noteFilterBranch')?.value||'';
+  const fs=$('noteFilterSearch')?.value?.toLowerCase()||'';
+  if(fy)notes=notes.filter(n=>n.year===fy);
+  if(fb)notes=notes.filter(n=>n.branch===fb);
+  if(fs)notes=notes.filter(n=>(n.subject||'').toLowerCase().includes(fs)||(n.topic||'').toLowerCase().includes(fs)||(n.title||'').toLowerCase().includes(fs));
+  if(!notes.length){g.innerHTML='<div class="empty-state"><span>📝</span><p>No notes uploaded yet. Be the first to share!</p></div>';return;}
+  g.innerHTML=notes.map(n=>`
+    <div class="note-card">
+      <div class="note-icon">${n.fileType==='pdf'?'📄':'📝'}</div>
+      <div class="note-body">
+        <div class="note-title">${(n.title||'Untitled').replace(/</g,'&lt;')}</div>
+        <div class="note-meta">
+          <span class="chip chip-yr">${n.year||'—'}</span>
+          <span class="chip chip-br">${n.branch||'—'}</span>
+          ${n.subject?`<span class="chip chip-ex">${n.subject}</span>`:''}
+        </div>
+        ${n.topic?`<div class="note-topic">Topic: ${n.topic}</div>`:''}
+        <div class="note-foot">
+          <span class="note-by">by ${n.uploadedBy||'anonymous'}</span>
+          <span class="note-time">${timeAgo(n.createdAt)}</span>
+          ${n.fileUrl?`<a href="${n.fileUrl}" target="_blank" class="btn btn-amber" style="padding:.25rem .7rem;font-size:.75rem">⬇ Download</a>`:''}
+          ${isAdmin?`<button class="pill-btn pill-btn--del" onclick="window._deleteNote('${n.id}')">🗑</button>`:''}
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+window._uploadNote=async function(){
+  if(!currentUser){page('auth');return;}
+  const title=$('noteTitle').value.trim();
+  const year=$('noteYear').value,branch=$('noteBranch').value;
+  const subject=$('noteSubject').value.trim(),topic=$('noteTopic').value.trim();
+  const file=$('noteFile').files[0];
+  if(!title||!year||!branch){toast('Title, Year and Branch are required','warn');return;}
+  if(!file){toast('Please select a file to upload','warn');return;}
+  if(file.size>10*1024*1024){toast('File must be under 10MB','warn');return;}
+  const btn=$('noteUploadBtn');btn.disabled=true;btn.textContent='Uploading…';
+  try{
+    const ext=file.name.split('.').pop().toLowerCase();
+    const fileType=['pdf'].includes(ext)?'pdf':'doc';
+    toast('Uploading to Cloudinary…','info');
+    const fileUrl=await uploadToCloudinary(file,'notes');
+    const handle=(currentUser.displayName||currentUser.email.split('@')[0]).toUpperCase().slice(0,12);
+    await addDoc(collection(db,'notes'),{title,year,branch,subject,topic,fileUrl,fileType,uploadedBy:handle,uploadedByEmail:currentUser.email,createdAt:serverTimestamp()});
+    toast('Notes uploaded! 📝','success');
+    $('noteTitle').value='';$('noteSubject').value='';$('noteTopic').value='';$('noteFile').value='';
+    $('noteModal').classList.remove('open');document.body.style.overflow='';
+  }catch(e){toast('Upload failed: '+e.message,'error');}
+  btn.disabled=false;btn.textContent='Upload Notes';
+};
+
+window._deleteNote=async function(id){
+  if(!isAdmin||!confirm('Delete this note?'))return;
+  await deleteDoc(doc(db,'notes',id));toast('Deleted','info');
+};
+
+function openNoteModal(){if(!currentUser){page('auth');return;}$('noteModal').classList.add('open');document.body.style.overflow='hidden';}
+function closeNoteModal(){$('noteModal').classList.remove('open');document.body.style.overflow='';}
+window.openNoteModal=openNoteModal;window.closeNoteModal=closeNoteModal;
+
+/* ═══════════════════════════════════
+   TIMETABLE
+═══════════════════════════════════ */
+function renderTimetableGrid(tt){
+  // Try structured JSON first
+  let schedJson = null;
+  if(tt.aiScheduleJson){
+    try{ schedJson = typeof tt.aiScheduleJson === 'string' ? JSON.parse(tt.aiScheduleJson) : tt.aiScheduleJson; }catch(e){}
+  }
+  if(schedJson && schedJson.days && schedJson.days.length){
+    // Collect all unique time slots across all days
+    const allSlots = [];
+    schedJson.days.forEach(day=>{
+      (day.periods||[]).forEach(p=>{
+        if(!allSlots.includes(p.time)) allSlots.push(p.time);
+      });
+    });
+    // Build lookup: day -> time -> subject
+    const lookup = {};
+    schedJson.days.forEach(day=>{
+      lookup[day.day]={};
+      (day.periods||[]).forEach(p=>{ lookup[day.day][p.time]=p; });
+    });
+    const days = schedJson.days.map(d=>d.day);
+    const todayName = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date().getDay()];
+    const subjectColors = {};
+    const palette = ['#fff3e0','#e8f5e9','#e3f2fd','#f3e5f5','#fce4ec','#e0f7fa','#fffde7','#f1f8e9'];
+    let colorIdx = 0;
+    function subjectColor(sub){
+      if(!sub) return '';
+      const key = sub.trim().toLowerCase();
+      if(!subjectColors[key]) subjectColors[key] = palette[colorIdx++ % palette.length];
+      return subjectColors[key];
+    }
+    const headerRow = `<tr><th class="tt-th-day">Day</th>${allSlots.map(s=>`<th class="tt-th-time">${s}</th>`).join('')}</tr>`;
+    const bodyRows = days.map(day=>{
+      const isToday = day.toLowerCase().includes(todayName.toLowerCase().slice(0,3));
+      const cells = allSlots.map(slot=>{
+        const p = lookup[day]?.[slot];
+        if(!p) return `<td class="tt-cell tt-cell-empty">—</td>`;
+        const bg = subjectColor(p.subject);
+        const style = bg ? `style="background:${bg}"` : '';
+        return `<td class="tt-cell" ${style}>
+          <div class="tt-cell-sub">${(p.subject||'').replace(/</g,'&lt;')}</div>
+          ${p.teacher?`<div class="tt-cell-teacher">${p.teacher.replace(/</g,'&lt;')}</div>`:''}
+          ${p.room?`<div class="tt-cell-room">🏫 ${p.room.replace(/</g,'&lt;')}</div>`:''}
+        </td>`;
+      }).join('');
+      return `<tr class="${isToday?'tt-row-today':''}">
+        <td class="tt-day-label${isToday?' tt-today-label':''}">${day}${isToday?' <span class="tt-today-badge">Today</span>':''}</td>
+        ${cells}
+      </tr>`;
+    }).join('');
+    return `<div class="tt-grid-wrap">
+      <div class="tt-ai-title">🤖 AI-Extracted Timetable</div>
+      <div class="tt-scroll-x">
+        <table class="tt-table">
+          <thead>${headerRow}</thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      </div>
+      ${schedJson.notes?`<div class="tt-notes">📌 ${schedJson.notes.replace(/</g,'&lt;')}</div>`:''}
+    </div>`;
+  }
+  // Fallback: plain text aiSchedule
+  if(tt.aiSchedule){
+    return `<div class="tt-ai"><div class="tt-ai-title">🤖 AI-Read Schedule</div><div class="tt-ai-body">${tt.aiSchedule.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div></div>`;
+  }
+  // No AI data yet
+  return `<div class="tt-ai" style="text-align:center;color:var(--ink3);font-size:.85rem;padding:.75rem">📷 Upload an image to extract schedule with AI</div>`;
+}
+
+function renderTimetable(){
+  const g=$('ttGrid');if(!g)return;
+  const fy=$('ttFilterYear')?.value||userProfile.year||'';
+  const fb=$('ttFilterBranch')?.value||'';
+  const fd=$('ttFilterDiv')?.value?.toUpperCase()||'';
+  let tts=[...allTimetables];
+  if(fy)tts=tts.filter(t=>t.year===fy);
+  if(fb)tts=tts.filter(t=>t.branch===fb);
+  if(fd)tts=tts.filter(t=>(t.division||'').toUpperCase()===fd);
+  if(!tts.length){g.innerHTML='<div class="empty-state"><span>📅</span><p>No timetable uploaded for this filter yet.</p></div>';return;}
+  g.innerHTML=tts.map(tt=>`
+    <div class="tt-card" id="ttcard-${tt.id}">
+      <div class="tt-head">
+        <div>
+          <div class="tt-title">${tt.year||'—'} ${tt.branch||''} — Div ${tt.division||'—'}</div>
+          <div class="tt-meta">Sem ${tt.sem||'—'} · Uploaded ${timeAgo(tt.createdAt)}</div>
+        </div>
+        <div style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap">
+          ${tt.fileUrl?`<a href="${tt.fileUrl}" target="_blank" class="btn btn-amber" style="padding:.3rem .8rem;font-size:.75rem">⬇ Download</a>`:''}
+          ${isAdmin?`<button class="pill-btn pill-btn--del" onclick="window._deleteTT('${tt.id}')">🗑</button>`:''}
+          ${isAdmin?`<button class="btn tt-extract-btn" id="ttextbtn-${tt.id}" onclick="window._reExtractTT('${tt.id}','${tt.fileUrl}','${tt.year}','${tt.branch}','${tt.division}','${tt.sem}')">🤖 ${tt.aiScheduleJson||tt.aiSchedule?'Re-extract':'Extract Schedule'}</button>`:''}
+        </div>
+      </div>
+      <div class="tt-result-area" id="ttresult-${tt.id}">${renderTimetableGrid(tt)}</div>
+    </div>`).join('');
+}
+
+/* ═══════════════════════════════════
+   AI TIMETABLE EXTRACTION (Claude Vision)
+═══════════════════════════════════ */
+async function extractTimetableWithAI(imageUrl, year, branch, division, sem){
+  // Call Vercel backend proxy — keeps API key secret, avoids CORS
+  const response = await fetch(AI_BACKEND + '/api/extract-timetable', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ imageUrl, year, branch, division, sem })
+  });
+  if(!response.ok){
+    const err = await response.json().catch(()=>({}));
+    throw new Error(err.error || 'Backend error: ' + response.status);
+  }
+  const data = await response.json();
+  return { json: data.aiScheduleJson || null, text: data.aiSchedule || '' };
+}
+
+// Re-extract schedule for existing timetable — shows result IMMEDIATELY in DOM
+window._reExtractTT = async function(id, imageUrl, year, branch, division, sem){
+  if(!isAdmin) return;
+  const resultArea = document.getElementById('ttresult-'+id);
+  const btn = document.getElementById('ttextbtn-'+id);
+
+  // 1. Show animated loading skeleton immediately
+  if(resultArea) resultArea.innerHTML = `
+    <div class="tt-loading">
+      <div class="tt-loading-spinner"></div>
+      <div class="tt-loading-text">
+        <span class="tt-loading-label">🤖 AI is reading your timetable…</span>
+        <span class="tt-loading-sub">Extracting days, periods &amp; subjects</span>
+      </div>
+      <div class="tt-skeleton-wrap">
+        ${[0,1,2,3,4,5].map(()=>`<div class="tt-skel-row">${[0,1,2,3,4,5,6].map(()=>`<div class="tt-skel-cell"></div>`).join('')}</div>`).join('')}
+      </div>
+    </div>`;
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Extracting…'; }
+
+  try {
+    const result = await extractTimetableWithAI(imageUrl, year, branch, division, sem);
+
+    // 2. Update the in-memory allTimetables object so renderTimetableGrid works
+    const ttIdx = allTimetables.findIndex(t=>t.id===id);
+    if(ttIdx>-1){
+      allTimetables[ttIdx].aiScheduleJson = result.json || null;
+      allTimetables[ttIdx].aiSchedule = result.text || '';
+    }
+    const fakeTT = { aiScheduleJson: result.json, aiSchedule: result.text };
+
+    // 3. Render the grid immediately into the DOM
+    if(resultArea){
+      const gridHtml = renderTimetableGrid(fakeTT);
+      resultArea.innerHTML = gridHtml;
+      // Animate in
+      resultArea.style.opacity='0';
+      requestAnimationFrame(()=>{ resultArea.style.transition='opacity .4s'; resultArea.style.opacity='1'; });
+    }
+
+    // 4. Persist to Firestore in background
+    updateDoc(doc(db,'timetables',id),{
+      aiScheduleJson: result.json || null,
+      aiSchedule: result.text || '',
+      updatedAt: serverTimestamp()
+    }).catch(e=>console.error('Firestore update failed:',e));
+
+    toast('✅ Schedule extracted successfully!','success');
+    if(btn){ btn.disabled=false; btn.innerHTML='🤖 Re-extract'; }
+
+  } catch(e) {
+    if(resultArea) resultArea.innerHTML=`<div class="tt-ai" style="color:#c0392b;text-align:center;padding:.75rem">❌ Extraction failed: ${e.message}</div>`;
+    if(btn){ btn.disabled=false; btn.innerHTML='🤖 Retry Extract'; }
+    toast('Extraction failed: '+e.message,'error');
+  }
+};
+
+window._uploadTimetable=async function(){
+  if(!currentUser){page('auth');return;}
+  const year=$('ttYear').value,branch=$('ttBranch').value;
+  const div=$('ttDiv').value.trim().toUpperCase(),sem=$('ttSem').value;
+  const file=$('ttFile').files[0];
+  if(!year||!branch||!div||!sem){toast('Fill all fields','warn');return;}
+  if(!file){toast('Select a timetable file','warn');return;}
+
+  // Check duplicate
+  const exists=allTimetables.find(t=>t.year===year&&t.branch===branch&&t.division===div&&t.sem===sem);
+  if(exists&&!isAdmin){
+    toast(`Timetable for ${year} ${branch} Div-${div} Sem-${sem} already exists! Contact admin to update.`,'warn');
+    return;
+  }
+
+  const btn=$('ttUploadBtn');btn.disabled=true;btn.textContent='Uploading…';
+  try{
+    toast('Uploading timetable…','info');
+    const fileUrl=await uploadToCloudinary(file,'timetables');
+    const handle=(currentUser.displayName||currentUser.email.split('@')[0]).toUpperCase().slice(0,12);
+    // AI reads timetable image using Claude vision
+    let aiSchedule='', aiScheduleJson=null;
+    try{
+      const ext=file.name.split('.').pop().toLowerCase();
+      if(['jpg','jpeg','png','webp'].includes(ext)){
+        toast('🤖 AI is reading your timetable…','info');
+        const result = await extractTimetableWithAI(fileUrl, year, branch, div, sem);
+        aiScheduleJson = result.json || null;
+        aiSchedule = result.text || '';
+      }
+    }catch(e){console.error('TT AI error:',e);}
+    const ttData={year,branch,division:div,sem,fileUrl,uploadedBy:handle,uploadedByEmail:currentUser.email,aiSchedule,aiScheduleJson,createdAt:serverTimestamp()};
+    if(exists&&isAdmin){
+      await updateDoc(doc(db,'timetables',exists.id),{...ttData,updatedAt:serverTimestamp()});
+    }else{
+      await addDoc(collection(db,'timetables'),ttData);
+    }
+    toast('Timetable uploaded! 📅','success');
+    $('ttModal').classList.remove('open');document.body.style.overflow='';
+    // Navigate to timetable page and render immediately without waiting for snapshot
+    page('timetable');
+    if(aiScheduleJson || aiSchedule){
+      // Give the snapshot a moment; if it hasn't rendered yet, show right away
+      setTimeout(()=>{
+        const cards = document.querySelectorAll('.tt-result-area');
+        cards.forEach(area=>{
+          if(area.innerHTML.includes('Upload an image')){
+            area.innerHTML = renderTimetableGrid({aiScheduleJson,aiSchedule});
+          }
+        });
+      }, 800);
+    }
+  }catch(e){toast('Upload failed: '+e.message,'error');}
+  btn.disabled=false;btn.textContent='Upload Timetable';
+};
+
+window._deleteTT=async function(id){if(!isAdmin||!confirm('Delete?'))return;await deleteDoc(doc(db,'timetables',id));toast('Deleted','info');};
+function openTTModal(){if(!currentUser){page('auth');return;}$('ttModal').classList.add('open');document.body.style.overflow='hidden';}
+function closeTTModal(){$('ttModal').classList.remove('open');document.body.style.overflow='';}
+window.openTTModal=openTTModal;window.closeTTModal=closeTTModal;
+
+/* ═══════════════════════════════════
+   BOOKMARKS
+═══════════════════════════════════ */
+window._bm=function(id){
+  bookmarks.includes(id)?(bookmarks=bookmarks.filter(b=>b!==id),toast('Removed','info')):(bookmarks.push(id),toast('Bookmarked! 🔖','success'));
+  localStorage.setItem('pq_bm',JSON.stringify(bookmarks));
+  renderFeed();renderBookmarks();
+};
+function renderBookmarks(){
+  const g=$('bmGrid');if(!g)return;
+  const qs=allQuestions.filter(q=>bookmarks.includes(q.id));
+  if(!qs.length){g.innerHTML='<div class="empty-state"><span>🔖</span><p>No bookmarks yet. Tap 🏷️ on any question.</p></div>';return;}
+  const safe=t=>(t||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  g.innerHTML=qs.map(q=>{
+    const prob=Math.min(100,Math.round((q.repeatCount/12)*100));
+    return `<article class="qcard">
+      <div class="chips"><span class="chip chip-yr">${q.year||'—'}</span><span class="chip chip-br">${q.branch||'—'}</span>${q.subject?`<span class="chip chip-ex">${safe(q.subject)}</span>`:''}</div>
+      <h3 class="qtext">${safe(q.text)}</h3>
+      ${q.answer?`<details class="qans"><summary>💡 Answer</summary><p>${safe(q.answer)}</p></details>`:''}
+      <div class="qfoot"><div class="meter"><span class="mnum">${q.repeatCount||1}</span><div class="mbar"><div class="mfill" style="width:${prob}%"></div></div><span class="mpct">${prob}%</span></div>
+      <button class="abtn abtn-dl" onclick="window._bm('${q.id}')">Remove</button></div>
+    </article>`;
+  }).join('');
+}
+
+/* ═══════════════════════════════════
+   UPVOTE / REPEAT / VERIFY / PIN
+═══════════════════════════════════ */
+window._upvote=async function(id){
+  if(!currentUser){toast('Sign in to upvote 👆','warn');setTimeout(()=>page('auth'),1200);return;}
+  const q=allQuestions.find(x=>x.id===id);if(!q)return;
+  const has=(q.upvotes||[]).includes(currentUser.uid);
+  await updateDoc(doc(db,'questions',id),{upvotes:has?arrayRemove(currentUser.uid):arrayUnion(currentUser.uid)});
+  if(!has)toast('Upvoted! 👍','success');
+};
+window._repeat=async function(id){
+  if(!currentUser){toast('Sign in to mark a repeat 👆','warn');setTimeout(()=>page('auth'),1200);return;}
+  if(!confirm('Mark this question as repeated in a previous paper? (+1 repeat count)'))return;
+  await updateDoc(doc(db,'questions',id),{repeatCount:increment(1)});
+  toast('Repeat marked! 🔥','success');
+};
+window._verify=async function(id){if(!isAdmin)return;await updateDoc(doc(db,'questions',id),{verified:true});toast('Verified ✅','success');};
+window._pin=async function(id){if(!isAdmin)return;await updateDoc(doc(db,'settings','main'),{pinned:[...pinnedIds,id]});toast('Pinned 📌','success');};
+window._unpin=async function(id){if(!isAdmin)return;await updateDoc(doc(db,'settings','main'),{pinned:pinnedIds.filter(x=>x!==id)});toast('Unpinned','info');};
+
+window._toggleAns=function(header){
+  const body=header.nextElementSibling;
+  const chevron=header.querySelector('.qans-chevron');
+  const isOpen=body.style.display!=='none';
+  body.style.display=isOpen?'none':'block';
+  chevron.style.transform=isOpen?'rotate(0)':'rotate(180deg)';
+  header.closest('.qans-wrap').classList.toggle('qans-open',!isOpen);
+};
+window._expandAns=function(btn){
+  const wrap=btn.parentElement;
+  wrap.querySelector('.qans-preview').style.display='none';
+  wrap.querySelector('.qans-full').style.display='block';
+  btn.style.display='none';
+};
+window._shareWA=function(id){
+  const q=allQuestions.find(x=>x.id===id);if(!q)return;
+  const prob=Math.min(100,Math.round((q.repeatCount/12)*100));
+  const ans=q.answer||(q.aiAnswer||'');
+  const msg='🔥 *Probable Exam Question — '+prob+'% likely*'
+    +'\n📘 *'+(q.subject||q.branch||'Engineering')+' | '+(q.year||'')+(q.examType?' | '+q.examType:'')+'*'
+    +'\n\n*Q: '+(q.text||'')+'*'
+    +(ans?'\n\n💡 *Answer:* '+ans.substring(0,300)+(ans.length>300?'…':''):'')
+    +'\n\n🔁 Repeated '+(q.repeatCount||1)+' times in previous papers'
+    +'\n\n📲 More at: '+window.location.origin;
+  window.open('https://wa.me/?text='+encodeURIComponent(msg),'_blank');
+};
+
+window._confirmedInExam=async function(id){
+  if(!currentUser){toast('Sign in to confirm','warn');setTimeout(()=>page('auth'),1200);return;}
+  const q=allQuestions.find(x=>x.id===id);if(!q)return;
+  if((q.confirmedBy||[]).includes(currentUser.uid)){toast('You already confirmed this!','info');return;}
+  await updateDoc(doc(db,'questions',id),{confirmedBy:arrayUnion(currentUser.uid),confirmedCount:increment(1),repeatCount:increment(1)});
+  toast('✅ Confirmed! This question appeared in exam.','success');
+};
+window._deleteQ=async function(id){if(!isAdmin||!confirm('Delete permanently?'))return;await deleteDoc(doc(db,'questions',id));toast('Deleted','info');};
+
+/* ═══════════════════════════════════
+   POST / EDIT QUESTION
+═══════════════════════════════════ */
+window._submitQuestion=async function(){
+  if(!currentUser){page('auth');return;}
+  const editId=$('modalEditId').value;
+  const year=$('qYear').value,branch=$('qBranch').value,subject=$('qSubject').value.trim();
+  const topic=$('qTopic').value.trim(),examType=$('qExamType').value;
+  const text=$('qText').value.trim(),answer=$('qAnswer').value.trim();
+  const tags=$('qTags').value.trim(),isRepeat=$('qRepeat').checked;
+  const anon=$('qAnon').checked,diff=$('qDiff').value;
+  if(!year||!branch||!text){
+    toast('Year, Branch and Question are required ☝️','warn');
+    if(!year){$('qYear').focus();$('qYear').style.borderColor='var(--rd)';setTimeout(()=>$('qYear').style.borderColor='',2000);}
+    else if(!branch){$('qBranch').focus();$('qBranch').style.borderColor='var(--rd)';setTimeout(()=>$('qBranch').style.borderColor='',2000);}
+    else{$('qText').focus();$('qText').style.borderColor='var(--rd)';setTimeout(()=>$('qText').style.borderColor='',2000);}
+    return;
+  }
+  const imgFile=$('qImage')?.files?.[0];
+  const btn=$('modalSubmitBtn');btn.disabled=true;btn.textContent=editId?'Saving…':'Posting…';
+  try{
+    // Upload image to Cloudinary if provided
+    let imageUrl='';
+    if(imgFile){
+      try{
+        toast('Uploading image…','info');
+        imageUrl=await uploadToCloudinary(imgFile,'questions');
+      }catch(e){toast('Image upload failed — posting without image','warn');}
+    }
+    if(editId){
+      const upd={year,branch,subject,topic,examType,text,answer,tags,difficulty:diff};
+      if(imageUrl) upd.imageUrl=imageUrl;
+      await updateDoc(doc(db,'questions',editId),upd);
+      toast('Updated ✏️','success');
+    }else{
+      const dupe=allQuestions.find(q=>q.branch===branch&&q.year===year&&(q.text||'').toLowerCase().slice(0,50)===text.toLowerCase().slice(0,50));
+      if(dupe){await updateDoc(doc(db,'questions',dupe.id),{repeatCount:increment(1)});toast('Duplicate found — repeat updated 🔁','success');}
+      else{
+        const handle=anon?'Anonymous':(currentUser.displayName||currentUser.email.split('@')[0]).toUpperCase().slice(0,12);
+        await addDoc(collection(db,'questions'),{year,branch,subject,topic,examType,text,answer,tags,difficulty:diff,repeatCount:isRepeat?2:1,upvotes:[],commentCount:0,verified:false,anonymous:anon,postedBy:handle,postedByEmail:currentUser.email,createdAt:serverTimestamp()});
+        if(!anon)updateDoc(doc(db,'users',currentUser.uid),{posts:increment(1),pts:increment(1)}).catch(()=>{});
+        toast('Question posted! 🎉','success');
+        // Auto-generate AI answer after posting if no answer provided
+        // (done via the button on the card after it appears in feed)
+      }
+    }
+    resetModal();closeModal();
+  }catch(e){toast('Error: '+e.message,'error');}
+  btn.disabled=false;btn.textContent=editId?'Save Changes':'Post Question';
+};
+
+function resetModal(){
+  $('modalEditId').value='';$('modalSubmitBtn').textContent='Post Question';
+  ['qSubject','qTopic','qText','qAnswer','qTags'].forEach(id=>{$(id).value='';});
+  $('qYear').selectedIndex=0;$('qBranch').selectedIndex=0;$('qExamType').selectedIndex=0;$('qDiff').selectedIndex=0;
+  $('qRepeat').checked=false;$('qAnon').checked=false;
+  const cnt=$('qTextCount');if(cnt)cnt.textContent='0 / 500';
+}
+window._editQ=function(id){
+  const q=allQuestions.find(x=>x.id===id);if(!q)return;
+  $('qYear').value=q.year||'';$('qBranch').value=q.branch||'';$('qSubject').value=q.subject||'';
+  $('qTopic').value=q.topic||'';$('qExamType').value=q.examType||'Endsem';$('qText').value=q.text||'';
+  $('qAnswer').value=q.answer||'';$('qTags').value=q.tags||'';$('qDiff').value=q.difficulty||'';
+  $('qRepeat').checked=false;$('qAnon').checked=false;$('modalEditId').value=id;
+  $('modalSubmitBtn').textContent='Save Changes';openModal();
+};
+
+function openModal(){$('qModal').classList.add('open');document.body.style.overflow='hidden';}
+function closeModal(){$('qModal').classList.remove('open');document.body.style.overflow='';}
+window.openModal=openModal;window.closeModal=closeModal;
+
+/* ═══════════════════════════════════
+   COMMENTS
+═══════════════════════════════════ */
+window._openCmt=function(qid){
+  $('cmtQid').value=qid;$('cmtList').innerHTML='<div class="cmt-empty">Loading…</div>';
+  $('cmtModal').classList.add('open');document.body.style.overflow='hidden';
+  onSnapshot(query(collection(db,'questions',qid,'comments'),orderBy('createdAt','asc')),snap=>{
+    const cs=snap.docs.map(d=>({id:d.id,...d.data()}));
+    $('cmtList').innerHTML=cs.length?cs.map(c=>`<div class="cmt">
+      <div class="cmt-head"><span class="cmt-auth">${c.author}</span><span class="cmt-time">${timeAgo(c.createdAt)}</span>
+      ${isAdmin?`<button class="cmt-del" onclick="window._delCmt('${qid}','${c.id}')">×</button>`:''}</div>
+      <div class="cmt-body">${(c.text||'').replace(/</g,'&lt;')}</div></div>`).join('')
+      :'<div class="cmt-empty">No comments yet. Start the discussion! 💬</div>';
+    $('cmtList').scrollTop=$('cmtList').scrollHeight;
+  });
+};
+window._postCmt=async function(){
+  if(!currentUser){closeCmt();page('auth');return;}
+  const txt=$('cmtInput').value.trim(),qid=$('cmtQid').value;
+  if(!txt||!qid)return;
+  $('cmtBtn').disabled=true;
+  await addDoc(collection(db,'questions',qid,'comments'),{text:txt,author:currentUser.displayName||currentUser.email.split('@')[0],authorEmail:currentUser.email,createdAt:serverTimestamp()});
+  await updateDoc(doc(db,'questions',qid),{commentCount:increment(1)});
+  $('cmtInput').value='';$('cmtBtn').disabled=false;
+};
+window._delCmt=async function(qid,cid){await deleteDoc(doc(db,'questions',qid,'comments',cid));await updateDoc(doc(db,'questions',qid),{commentCount:increment(-1)});};
+function closeCmt(){$('cmtModal').classList.remove('open');document.body.style.overflow='';}
+window.closeCmt=closeCmt;
+
+/* ═══════════════════════════════════
+   REPORT MODAL
+═══════════════════════════════════ */
+window._reportQ=function(id){
+  if(!currentUser){toast('Sign in to report','warn');setTimeout(()=>page('auth'),1200);return;}
+  $('reportQid').value=id;$('reportReason').value='';
+  $('reportModal').classList.add('open');document.body.style.overflow='hidden';
+};
+window._submitReport=async function(){
+  const id=$('reportQid').value,reason=$('reportReason').value;
+  if(!reason){toast('Please select a reason','warn');return;}
+  await addDoc(collection(db,'reports'),{qid:id,reason,reportedBy:currentUser.email,createdAt:serverTimestamp()});
+  $('reportModal').classList.remove('open');document.body.style.overflow='';
+  toast('Reported to admin. Thanks! 🚩','success');
+};
+function closeReport(){$('reportModal').classList.remove('open');document.body.style.overflow='';}
+window.closeReport=closeReport;
+
+/* ═══════════════════════════════════
+   FLASHCARD REVISION
+═══════════════════════════════════ */
+function startRevision(){
+  const yr=$('flashYear')?.value||'',br=$('flashBranch')?.value||'';
+  let pool=allQuestions.filter(q=>q.repeatCount>=2||bookmarks.includes(q.id));
+  if(!pool.length)pool=[...allQuestions];
+  if(yr)pool=pool.filter(q=>q.year===yr);
+  if(br)pool=pool.filter(q=>q.branch===br);
+  if(!pool.length){toast('No questions found for this filter','warn');return;}
+  flashCards=pool;flashCards.sort(()=>Math.random()-0.5);flashIdx=0;showFlash();
+}
+function showFlash(){
+  const el=$('flashCard');if(!el||!flashCards.length)return;
+  const q=flashCards[flashIdx];
+  const safe=t=>(t||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  $('flashCount').textContent=(flashIdx+1)+' / '+flashCards.length;
+  $('flashProgress').style.width=(((flashIdx+1)/flashCards.length)*100)+'%';
+  const ans=q.answer||(q.aiAnswer?'[AI] '+q.aiAnswer:'');
+  el.innerHTML=`<div class="flash-meta"><span class="chip chip-yr">${q.year||'—'}</span><span class="chip chip-br">${q.branch||'—'}</span>${q.subject?`<span class="chip chip-ex">${safe(q.subject)}</span>`:''}<span class="chip chip-ex">🔁 ${q.repeatCount}</span></div>
+    <div class="flash-q">${safe(q.text)}</div>
+    ${ans?`<div class="flash-ans" id="flashAns" style="display:none"><div class="flash-ans-label">💡 Answer</div><div>${safe(ans.replace('[AI] ',''))}</div></div>
+    <button class="flash-reveal" id="flashRevealBtn" onclick="window._revealFlash()">Reveal Answer</button>`
+    :'<div style="color:var(--ink3);font-size:.85rem;margin-top:1rem">No answer yet. <button class="ai-gen-btn" onclick="window._generateAIAnswer(\''+q.id+'\')">🤖 Generate AI Answer</button></div>'}`;
+}
+window._revealFlash=function(){const a=$('flashAns'),b=$('flashRevealBtn');if(a)a.style.display='block';if(b)b.style.display='none';};
+window._nextFlash=function(){if(flashIdx<flashCards.length-1){flashIdx++;showFlash();}else toast('🎉 All cards reviewed!','success');};
+window._prevFlash=function(){if(flashIdx>0){flashIdx--;showFlash();}};
+window._shuffleFlash=function(){flashCards.sort(()=>Math.random()-0.5);flashIdx=0;showFlash();toast('Shuffled! 🔀','info');};
+
+/* ═══════════════════════════════════
+   PROFILE
+═══════════════════════════════════ */
+async function renderProfile(){
+  if(!currentUser)return;
+  const snap=await getDoc(doc(db,'users',currentUser.uid));
+  const data=snap.exists()?snap.data():{};
+  const myQs=allQuestions.filter(q=>q.postedByEmail===currentUser.email);
+  const pts=myQs.reduce((a,q)=>a+1+Math.max(0,(q.repeatCount||1)-1),0);
+  const badges=[];
+  if(myQs.length>=1)badges.push('🌱 First Post');
+  if(myQs.length>=5)badges.push('📚 Active Contributor');
+  if(myQs.length>=10)badges.push('🔥 Power Poster');
+  if(myQs.some(q=>q.repeatCount>=5))badges.push('⚡ Trendsetter');
+  if(myQs.some(q=>q.verified))badges.push('✅ Verified Contributor');
+  const safe=t=>(t||'').replace(/</g,'&lt;');
+  $('profileContent').innerHTML=`
+    <div class="profile-card">
+      <div class="profile-av">${(currentUser.displayName||currentUser.email)[0].toUpperCase()}</div>
+      <div class="profile-name">${safe(data.name||currentUser.displayName||'Student')}</div>
+      <div class="profile-roll">${safe(data.roll||currentUser.email)}</div>
+      <div class="profile-chips" style="margin:.5rem 0">
+        ${data.year?`<span class="chip chip-yr">${data.year}</span>`:''}
+        ${data.sem?`<span class="chip chip-ex">Sem ${data.sem}</span>`:''}
+        ${data.division?`<span class="chip chip-br">Div ${data.division}</span>`:''}
+      </div>
+      <div class="profile-stats">
+        <div class="pstat"><b>${myQs.length}</b><small>Posts</small></div>
+        <div class="pstat"><b>${pts}</b><small>Points</small></div>
+        <div class="pstat"><b>${bookmarks.length}</b><small>Saved</small></div>
+      </div>
+      ${badges.length?`<div class="profile-badges">${badges.map(b=>`<span class="pbadge">${b}</span>`).join('')}</div>`:''}
+    </div>
+    <!-- Edit Profile -->
+    <div class="admin-section" style="max-width:480px;margin:1.5rem auto 0">
+      <div class="admin-section-title">✏️ Update Your Profile</div>
+      <div class="fg">
+        <div class="ff"><label class="fl">Year</label>
+          <select class="fs" id="editYear">
+            <option value="">—</option><option${data.year==='FY'?' selected':''}>FY</option>
+            <option${data.year==='SY'?' selected':''}>SY</option><option${data.year==='TY'?' selected':''}>TY</option>
+            <option${data.year==='BE'?' selected':''}>BE</option>
+          </select></div>
+        <div class="ff"><label class="fl">Semester</label>
+          <select class="fs" id="editSem">
+            <option value="">—</option>
+            ${[1,2,3,4,5,6,7,8].map(s=>`<option${data.sem==s?' selected':''}>${s}</option>`).join('')}
+          </select></div>
+      </div>
+      <div class="ff"><label class="fl">Division (e.g. K, K1, K2)</label>
+        <input class="fi" id="editDiv" value="${safe(data.division||'')}" placeholder="e.g. K1"></div>
+      <button class="btn btn-amber" onclick="window._saveProfile()">Save Profile</button>
+    </div>
+    <div class="sec-hd" style="margin-top:1.5rem"><h2 style="font-size:1.1rem">My Questions</h2><hr></div>
+    ${myQs.length?`<div class="feed-grid">${myQs.map(q=>{const prob=Math.min(100,Math.round((q.repeatCount/12)*100));
+      return `<article class="qcard"><h3 class="qtext">${safe(q.text).substring(0,120)}…</h3>
+        <div class="chips"><span class="chip chip-yr">${q.year||'—'}</span><span class="chip chip-br">${q.branch||'—'}</span></div>
+        <div class="qfoot"><div class="meter"><span class="mnum">${q.repeatCount||1}</span><div class="mbar"><div class="mfill" style="width:${prob}%"></div></div><span class="mpct">${prob}%</span></div></div>
+      </article>`;}).join('')}</div>`:'<p class="empty-inline">No questions posted yet.</p>'}`;
+}
+
+window._saveProfile=async function(){
+  if(!currentUser)return;
+  const year=$('editYear')?.value||'',sem=$('editSem')?.value||'',div=$('editDiv')?.value.trim().toUpperCase()||'';
+  await updateDoc(doc(db,'users',currentUser.uid),{year,sem,division:div});
+  userProfile={...userProfile,year,sem,division:div};
+  localStorage.setItem('pq_profile',JSON.stringify(userProfile));
+  toast('Profile updated! ✅','success');
+  renderFeed();
+};
+
+/* ═══════════════════════════════════
+   ANALYTICS
+═══════════════════════════════════ */
+function renderAnalytics(){
+  refreshSubjectChart();
+  const sm={};allQuestions.forEach(q=>{if(q.subject)sm[q.subject]=(sm[q.subject]||0)+1;});
+  const sorted=Object.entries(sm).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  $('analyticsStats').innerHTML=sorted.map(([s,c])=>`<div class="astat-row">
+    <span class="astat-name">${s}</span>
+    <div class="astat-bar-wrap"><div class="astat-bar" style="width:${Math.round(c/Math.max(sorted[0][1],1)*100)}%"></div></div>
+    <span class="astat-count">${c}</span></div>`).join('');
+}
+function refreshSubjectChart(){
+  const sm={};allQuestions.forEach(q=>{if(q.subject)sm[q.subject]=(sm[q.subject]||0)+(q.repeatCount||1);});
+  const sorted=Object.entries(sm).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const ctx=$('subjectChart');if(!ctx)return;
+  if(subjectChart)subjectChart.destroy();
+  subjectChart=new Chart(ctx,{type:'doughnut',
+    data:{labels:sorted.map(x=>x[0]),datasets:[{data:sorted.map(x=>x[1]),backgroundColor:['#b4823f','#2e7d52','#2a5fad','#8a6000','#cc5500','#6a3fad','#3f7db4','#7d522e'],borderWidth:2}]},
+    options:{responsive:true,plugins:{legend:{position:'right',labels:{color:'var(--ink3)',font:{size:11}}}}}});
+}
+
+/* ═══════════════════════════════════
+   SIDEBAR / CHART / HISTORY
+═══════════════════════════════════ */
+function refreshSidebar(){
+  const yc={};allQuestions.forEach(q=>{yc[q.year]=(yc[q.year]||0)+1;});
+  $('sideYears').innerHTML=['FY','SY','TY','BE'].map(y=>
+    `<div class="side-yr" onclick="$('fYear').value='${y}';window._filter()"><span>${y}</span><span class="pill">${yc[y]||0}</span></div>`
+  ).join('');
+  const tm={};allQuestions.forEach(q=>{(q.tags||'').split(',').forEach(t=>{const tt=t.trim().toLowerCase();if(tt)tm[tt]=(tm[tt]||0)+(q.repeatCount||1);});});
+  $('sideTrend').innerHTML=Object.entries(tm).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([t,c])=>
+    `<div class="trend-row"><span class="trend-t">#${t}</span><span class="pill">${c}</span></div>`
+  ).join('')||'<span class="dim">No tags yet</span>';
+  const wc=allQuestions.filter(q=>q.createdAt?.toMillis()>Date.now()-7*86400000).length;
+  const tb=$('trendingBadge');if(tb&&wc>0){tb.textContent=wc;tb.style.display='inline';}
+}
+function refreshChart(){
+  const tm={};allQuestions.forEach(q=>{(q.tags||'').split(',').forEach(t=>{const tt=t.trim();if(tt)tm[tt]=(tm[tt]||0)+(q.repeatCount||1);});});
+  const sorted=Object.entries(tm).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const ctx=$('topicChart');if(!ctx)return;
+  if(topicChart)topicChart.destroy();
+  topicChart=new Chart(ctx,{type:'bar',
+    data:{labels:sorted.map(x=>x[0]),datasets:[{data:sorted.map(x=>x[1]),backgroundColor:'rgba(180,130,63,0.18)',borderColor:'rgba(180,130,63,0.85)',borderWidth:2,borderRadius:4}]},
+    options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'var(--chart-tick)'},grid:{color:'var(--chart-grid)'}},y:{ticks:{color:'var(--chart-tick)'},grid:{color:'var(--chart-grid)'}}}}});
+}
+function renderHistory(){
+  const tb=$('historyBody');if(!tb)return;
+  if(!allQuestions.length){tb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:2.5rem;color:var(--ink3)">📭 No questions posted yet.</td></tr>';return;}
+  tb.innerHTML=allQuestions.slice(0,80).map(q=>{
+    const p=Math.min(100,Math.round((q.repeatCount/12)*100));
+    return `<tr><td class="td-q">${(q.text||'').substring(0,60)}…</td><td>${q.year||'—'}</td><td>${q.branch||'—'}</td><td>${q.subject||'—'}</td><td>${q.examType||'—'}</td><td><b>${q.repeatCount}</b></td><td class="td-prob">${p}%</td></tr>`;
+  }).join('');
+}
+
+/* ═══════════════════════════════════
+   FILTERS
+═══════════════════════════════════ */
+window._filter=function(){
+  renderFeed({year:$('fYear').value,branch:$('fBranch').value,subject:$('fSubject').value,diff:$('fDiff').value,search:$('fSearch').value,sort:$('fSort').value});
+};
+window._filterWeek=function(){renderFeed({week:true});};
+
+/* ═══════════════════════════════════
+   ADMIN
+═══════════════════════════════════ */
+function prefillAdminSettings(d){
+  const ae=$('adminExamDate'),al=$('adminExamLabel'),an=$('adminAnnText'),aa=$('adminAnnActive');
+  if(ae&&d.examDate)ae.value=d.examDate.slice(0,16);
+  if(al&&d.examLabel)al.value=d.examLabel;
+  if(an&&d.announcement!==undefined)an.value=d.announcement;
+  if(aa)aa.checked=d.announcementActive||false;
+  const cur=$('adminCurDate');
+  if(cur&&d.examDate)cur.textContent='Current: '+new Date(d.examDate).toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})+(d.examLabel?' — '+d.examLabel:'');
+}
+window._saveSettings=async function(){
+  if(!isAdmin)return;
+  const dateVal=$('adminExamDate').value,labelVal=$('adminExamLabel').value.trim()||'Endsem Countdown';
+  const ann=$('adminAnnText').value.trim(),annActive=$('adminAnnActive').checked;
+  if(!dateVal){toast('Pick a date','warn');return;}
+  await setDoc(doc(db,'settings','main'),{examDate:dateVal,examLabel:labelVal,announcement:ann,announcementActive:annActive,pinned:pinnedIds},{merge:true});
+  toast('Settings saved! ✅','success');
+};
+function renderAdminPage(){
+  if(!isAdmin)return;
+  $('aStatQ').textContent=allQuestions.length;
+  $('aStatP').textContent=new Set(allQuestions.map(q=>q.postedBy).filter(Boolean)).size;
+  $('aStatV').textContent=allQuestions.filter(q=>q.verified).length;
+  $('aStatN').textContent=allNotes.length;
+  const el=$('adminQList');if(!el)return;
+  el.innerHTML=allQuestions.slice(0,60).map(q=>`<div class="admin-row">
+    <div class="admin-q">${(q.text||'').substring(0,80).replace(/</g,'&lt;')}… ${q.verified?'✅':''} ${pinnedIds.includes(q.id)?'📌':''}</div>
+    <div class="admin-meta">${q.year||'?'} · ${q.branch||'?'} · ${q.subject||'—'} · ×${q.repeatCount||1} · 👍${(q.upvotes||[]).length} · 💬${q.commentCount||0}</div>
+    <div class="admin-acts">
+      <button class="pill-btn" onclick="window._editQ('${q.id}');page('home')">✏ Edit</button>
+      <button class="pill-btn pill-btn--del" onclick="window._deleteQ('${q.id}')">🗑</button>
+      <button class="pill-btn" onclick="window._repeat('${q.id}')">▲ Rep</button>
+      ${!q.verified?`<button class="pill-btn pill-btn--vf" onclick="window._verify('${q.id}')">✅</button>`:''}
+      ${!pinnedIds.includes(q.id)?`<button class="pill-btn" onclick="window._pin('${q.id}')">📌</button>`:`<button class="pill-btn" onclick="window._unpin('${q.id}')">📍</button>`}
+      <button class="pill-btn" onclick="window._generateAIAnswer('${q.id}')">🤖 AI</button>
+    </div></div>`).join('')||'<p class="empty-inline">No questions.</p>';
+  getDocs(collection(db,'reports')).then(snap=>{
+    const rEl=$('adminReports');if(!rEl)return;
+    if(!snap.size){rEl.innerHTML='<p class="empty-inline">No reports.</p>';return;}
+    rEl.innerHTML=snap.docs.map(d=>{const r=d.data();return `<div class="admin-row"><div class="admin-q">🚩 ${r.reason}</div><div class="admin-meta">Q: ${r.qid} · by ${r.reportedBy}</div><button class="pill-btn pill-btn--del" onclick="window._dismissReport('${d.id}')">Dismiss</button></div>`;}).join('');
+  });
+}
+window._dismissReport=async function(id){await deleteDoc(doc(db,'reports',id));toast('Dismissed','info');renderAdminPage();};
+window._exportCSV=function(){
+  if(!isAdmin)return;
+  const rows=[['Year','Branch','Subject','Topic','ExamType','Difficulty','Question','Answer','AIAnswer','AIChecked','RepeatCount','Upvotes','Comments','Tags','Verified','PostedBy']];
+  allQuestions.forEach(q=>rows.push([q.year,q.branch,q.subject,q.topic,q.examType,q.difficulty,'"'+(q.text||'').replace(/"/g,'""')+'"','"'+(q.answer||'').replace(/"/g,'""')+'"','"'+(q.aiAnswer||'').replace(/"/g,'""')+'"',q.aiChecked?'Yes':'No',q.repeatCount,(q.upvotes||[]).length,q.commentCount||0,q.tags,q.verified?'Yes':'No',q.postedBy]));
+  const blob=new Blob([rows.map(r=>r.join(',')).join('\n')],{type:'text/csv'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='probq_'+new Date().toISOString().slice(0,10)+'.csv';a.click();
+  toast('CSV exported!','success');
+};
+
+/* ═══════════════════════════════════
+   PDF EXPORT
+═══════════════════════════════════ */
+window._exportPDF=function(){
+  const branch=$('pdfBranch').value,year=$('pdfYear').value,subject=$('pdfSubject').value.trim();
+  let qs=[...allQuestions];
+  if(branch)qs=qs.filter(q=>q.branch===branch);
+  if(year)qs=qs.filter(q=>q.year===year);
+  if(subject)qs=qs.filter(q=>(q.subject||'').toLowerCase().includes(subject.toLowerCase()));
+  qs=qs.slice(0,15);
+  if(!qs.length){toast('No questions match the filter','warn');return;}
+  const{jsPDF}=window.jspdf;
+  const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+  const W=210,margin=18,lh=7;let y=margin;
+  pdf.setFillColor(26,22,16);pdf.rect(0,0,W,28,'F');
+  pdf.setTextColor(255,255,255);pdf.setFontSize(18);pdf.setFont('helvetica','bold');
+  pdf.text('ProbQ 2026 — Probable Questions',margin,12);
+  pdf.setFontSize(9);pdf.setFont('helvetica','normal');
+  pdf.text('Amrutvahini College of Engineering',margin,18);
+  pdf.text([year,branch,subject].filter(Boolean).join(' | ')||'All Questions',margin,23);
+  pdf.text('Generated: '+new Date().toLocaleDateString('en-IN'),W-margin,23,{align:'right'});
+  y=36;pdf.setTextColor(26,22,16);
+  qs.forEach(function(q,i){
+    if(y>270){pdf.addPage();y=margin;}
+    const prob=Math.min(100,Math.round((q.repeatCount/12)*100));
+    pdf.setFillColor(250,247,242);pdf.roundedRect(margin-2,y-3,W-2*margin+4,lh+2,2,2,'F');
+    pdf.setFontSize(9);pdf.setFont('helvetica','bold');pdf.setTextColor(180,130,63);
+    pdf.text('Q'+(i+1)+'.  '+(q.year||'')+'  '+(q.branch||'')+'  '+(q.subject||''),margin,y+3);
+    pdf.setFontSize(7);pdf.setTextColor(100,100,100);
+    pdf.text('Repeats: '+q.repeatCount+'  |  Probability: '+prob+'%  |  '+(q.examType||''),W-margin,y+3,{align:'right'});
+    y+=lh+2;
+    pdf.setFontSize(10);pdf.setFont('helvetica','normal');pdf.setTextColor(26,22,16);
+    pdf.splitTextToSize(q.text||'',W-2*margin).forEach(line=>{if(y>275){pdf.addPage();y=margin;}pdf.text(line,margin,y);y+=5.5;});
+    const ans=q.answer||(q.aiAnswer?'[AI] '+q.aiAnswer:'');
+    if(ans){pdf.setFontSize(8.5);pdf.setFont('helvetica','italic');pdf.setTextColor(46,125,82);pdf.splitTextToSize((q.aiAnswer&&!q.answer?'AI Answer: ':'')+ans.replace('[AI] ',''),W-2*margin).forEach(line=>{if(y>275){pdf.addPage();y=margin;}pdf.text(line,margin,y);y+=5;});pdf.setFont('helvetica','normal');pdf.setTextColor(26,22,16);}
+    y+=4;pdf.setDrawColor(220,210,198);pdf.line(margin,y,W-margin,y);y+=4;
+  });
+  pdf.setFontSize(8);pdf.setTextColor(150,140,130);pdf.setFont('helvetica','italic');
+  pdf.text('ProbQ 2026 — '+window.location.hostname,W/2,290,{align:'center'});
+  pdf.save('ProbQ_'+[year,branch,subject].filter(Boolean).join('_')+'_'+new Date().toISOString().slice(0,10)+'.pdf');
+  toast('PDF downloaded! 📄','success');
+};
+
+/* ═══════════════════════════════════
+   UTILS
+═══════════════════════════════════ */
+function timeAgo(ts){if(!ts)return'just now';const d=ts.toDate?ts.toDate():new Date(ts),s=Math.floor((Date.now()-d)/1000);if(s<60)return'just now';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago';}
+
+function toast(msg,type){
+  type=type||'info';const c=$('toastBox');
+  Array.from(c.children).forEach(el=>{if(el.textContent===msg)el.remove();});
+  while(c.children.length>=3)c.firstChild.remove();
+  const t=document.createElement('div');t.className='toast toast-'+type;t.innerHTML='<span>'+msg+'</span>';
+  c.appendChild(t);requestAnimationFrame(()=>t.classList.add('in'));
+  setTimeout(()=>{t.classList.remove('in');setTimeout(()=>t.remove(),350);},4000);
+}
+
+window._togglePass=function(inputId,btn){const inp=$(inputId);if(inp.type==='password'){inp.type='text';btn.textContent='🙈';}else{inp.type='password';btn.textContent='👁';}};
+
+/* ═══════════════════════════════════
+   BOOT
+═══════════════════════════════════ */
+window.addEventListener('DOMContentLoaded',function(){
+  // Pull-to-refresh on mobile
+  let startY=0;
+  document.addEventListener('touchstart',e=>{startY=e.touches[0].clientY;},{passive:true});
+  document.addEventListener('touchend',e=>{
+    const dy=e.changedTouches[0].clientY-startY;
+    if(dy>80&&window.scrollY===0){
+      toast('Refreshing…','info');
+      setTimeout(()=>location.reload(),300);
+    }
+  },{passive:true});
+  bootListeners();syncNavUI();page('home');updateCountdown();
+  $('fYear').addEventListener('change',function(){$('fBranch').value='';window._filter();});
+  ['fBranch','fDiff','fSort'].forEach(id=>$(id)?.addEventListener('change',window._filter));
+  ['fSubject','fSearch'].forEach(id=>$(id)?.addEventListener('input',window._filter));
+  $('qModal').addEventListener('click',e=>{if(e.target===$('qModal'))closeModal();});
+  $('cmtModal').addEventListener('click',e=>{if(e.target===$('cmtModal'))closeCmt();});
+  $('reportModal').addEventListener('click',e=>{if(e.target===$('reportModal'))closeReport();});
+  $('noteModal').addEventListener('click',e=>{if(e.target===$('noteModal'))closeNoteModal();});
+  $('ttModal').addEventListener('click',e=>{if(e.target===$('ttModal'))closeTTModal();});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();closeCmt();closeReport();closeNoteModal();closeTTModal();}});
+  $('cmtInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();window._postCmt();}});
+  $('qText').addEventListener('input',function(){const el=$('qTextCount');if(el)el.textContent=this.value.length+' / 500';});
+  ['noteFilterYear','noteFilterBranch'].forEach(id=>$(id)?.addEventListener('change',renderNotes));
+  $('noteFilterSearch')?.addEventListener('input',renderNotes);
+  ['ttFilterYear','ttFilterBranch','ttFilterDiv'].forEach(id=>$(id)?.addEventListener('change',renderTimetable));
+  let dp;window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();dp=e;$('installBtn').style.display='flex';});
+  $('installBtn')?.addEventListener('click',()=>{if(dp){dp.prompt();dp=null;$('installBtn').style.display='none';}});
+});
+</script>
+
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:16px;scroll-behavior:smooth}
+:root,[data-theme="light"]{
+  --bg:#faf7f2;--bg2:#f3ede3;--bg3:#ebe3d5;--card:#fff;--cb:#ddd5c6;
+  --ink:#1a1610;--ink2:#3d3528;--ink3:#7a6f60;--ink4:#b0a898;
+  --am:#b4823f;--aml:#c9973f;--amb:rgba(180,130,63,.09);
+  --gn:#2e7d52;--gnb:rgba(46,125,82,.09);
+  --rd:#b83232;--rdb:rgba(184,50,50,.08);
+  --bl:#2a5fad;--blb:rgba(42,95,173,.09);
+  --mast:#1a1610;--mastb:rgba(255,255,255,.08);
+  --sh0:0 1px 4px rgba(0,0,0,.07);--sh1:0 4px 16px rgba(0,0,0,.09);--sh2:0 8px 32px rgba(0,0,0,.13);
+  --chart-tick:#888;--chart-grid:#f0ebe3;--r:10px;
+  --sf:'Playfair Display',Georgia,serif;--ss:'Source Sans 3',system-ui,sans-serif;
+}
+[data-theme="dark"]{
+  --bg:#0f0e0c;--bg2:#181510;--bg3:#201c16;--card:#1c1814;--cb:#2e2820;
+  --ink:#f0e8dc;--ink2:#d4c8b8;--ink3:#9a8e80;--ink4:#6a6058;
+  --am:#d4a45a;--aml:#e0b46a;--amb:rgba(212,164,90,.12);
+  --gn:#4caf74;--gnb:rgba(76,175,116,.12);
+  --rd:#e05555;--rdb:rgba(224,85,85,.12);
+  --bl:#5a8fe0;--blb:rgba(90,143,224,.12);
+  --mast:#0a0908;--mastb:rgba(255,255,255,.06);
+  --sh0:0 1px 4px rgba(0,0,0,.3);--sh1:0 4px 16px rgba(0,0,0,.35);--sh2:0 8px 32px rgba(0,0,0,.5);
+  --chart-tick:#6a6058;--chart-grid:#201c16;
+}
+body{font-family:var(--ss);background:var(--bg);color:var(--ink);min-height:100vh;transition:background .3s,color .3s}
+
+/* ANNOUNCEMENT */
+#announcementBar{background:linear-gradient(90deg,var(--am),var(--gn));color:#fff;padding:.6rem 1.5rem;display:none;align-items:center;gap:.75rem;font-size:.85rem;font-weight:600;position:sticky;top:0;z-index:60;}
+#announcementBar button{background:rgba(255,255,255,.2);border:none;border-radius:50%;width:22px;height:22px;cursor:pointer;color:#fff;font-size:.9rem;display:grid;place-items:center;flex-shrink:0;margin-left:auto;}
+
+/* MASTHEAD */
+.mast{background:var(--mast);color:#f0e8dc;border-bottom:3px solid var(--am);position:sticky;top:0;z-index:50;}
+.mast-top{max-width:1280px;margin:0 auto;padding:.8rem 1.5rem .4rem;display:flex;align-items:center;gap:1rem;}
+.mast-brand{flex:1;}
+.mast-name{font-family:var(--sf);font-size:1.8rem;font-weight:900;letter-spacing:-.5px;line-height:1;color:#f0e8dc;}
+.mast-name em{color:var(--am);font-style:normal;}
+.mast-college{font-size:.65rem;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:var(--ink4);margin-top:.2rem;}
+#navUser{display:flex;gap:.45rem;align-items:center;flex-shrink:0;}
+.nav-pill{display:flex;gap:.5rem;align-items:center;background:rgba(255,255,255,.07);border-radius:50px;padding:.25rem .8rem .25rem .3rem;border:1px solid rgba(255,255,255,.1);}
+.av{width:26px;height:26px;border-radius:50%;background:var(--am);color:#1a1610;font-weight:700;font-size:.75rem;display:grid;place-items:center;flex-shrink:0;}
+.nav-uname{font-size:.78rem;color:#f0e8dc;}
+.mast-ctrl{display:flex;gap:.35rem;align-items:center;flex-shrink:0;}
+.ibtn{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);border-radius:7px;width:32px;height:32px;display:grid;place-items:center;cursor:pointer;font-size:.95rem;color:#f0e8dc;transition:all .2s;}
+.ibtn:hover{background:rgba(255,255,255,.15);}
+#installBtn{display:none;align-items:center;gap:.35rem;background:var(--am);color:#fff;border:none;border-radius:6px;padding:.3rem .75rem;font-size:.72rem;font-weight:700;cursor:pointer;}
+.mast-nav{max-width:1280px;margin:0 auto;padding:0 1.5rem;display:flex;border-top:1px solid var(--mastb);overflow-x:auto;}
+.nav-link{font-weight:600;font-size:.72rem;letter-spacing:.5px;text-transform:uppercase;padding:.58rem .95rem;color:var(--ink4);border:none;background:none;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-3px;transition:color .2s,border-color .2s;white-space:nowrap;flex-shrink:0;position:relative;}
+.nav-link:hover{color:#f0e8dc;}
+.nav-link.active{color:var(--am);border-bottom-color:var(--am);}
+.nav-badge{background:var(--rd);color:#fff;font-size:.58rem;font-weight:700;border-radius:50px;padding:.05rem .35rem;position:absolute;top:.35rem;right:.3rem;}
+
+/* COUNTDOWN */
+.cd-bar{background:var(--mast);border-bottom:1px solid var(--mastb);padding:.45rem 1.5rem;}
+.cd-inner{max-width:1280px;margin:0 auto;display:flex;align-items:center;gap:.85rem;flex-wrap:wrap;}
+.cd-lbl{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--ink4);}
+#countdown{display:flex;gap:.2rem;align-items:center;}
+.cd-unit{display:flex;flex-direction:column;align-items:center;background:rgba(255,255,255,.06);border-radius:5px;padding:.18rem .45rem;min-width:34px;}
+.cd-n{font-family:var(--sf);font-size:1rem;font-weight:700;color:var(--am);line-height:1;display:block;}
+.cd-unit small{font-size:.5rem;text-transform:uppercase;letter-spacing:.5px;color:var(--ink4);}
+.cd-sep{color:var(--am);font-weight:700;align-self:flex-start;margin-top:.2rem;}
+.cd-fire{color:var(--am);font-weight:700;font-size:.9rem;}
+.trend-week-btn{font-size:.75rem;font-weight:600;padding:.35rem .8rem;border-radius:50px;border:1.5px solid rgba(255,255,255,.15);background:transparent;color:var(--ink4);cursor:pointer;display:flex;align-items:center;gap:.3rem;}
+.trend-week-btn:hover{border-color:var(--am);color:var(--am);}
+
+/* BTNS */
+.btn{font-family:var(--ss);font-size:.82rem;font-weight:600;border:none;border-radius:6px;padding:.45rem 1rem;cursor:pointer;transition:all .18s;white-space:nowrap;}
+.btn-amber{background:var(--am);color:#fff;}.btn-amber:hover{background:var(--aml);}
+.btn-ghost{background:transparent;color:var(--ink4);border:1px solid rgba(255,255,255,.2);}.btn-ghost:hover{color:#f0e8dc;}
+.btn-outline{background:transparent;color:var(--am);border:1.5px solid var(--am);}.btn-outline:hover{background:var(--amb);}
+.btn-full{width:100%;padding:.72rem;font-size:.93rem;text-align:center;}
+.btn:disabled{opacity:.6;cursor:not-allowed;}
+.lbtn{background:none;border:none;cursor:pointer;color:var(--ink4);font-size:.72rem;text-decoration:underline;}
+.pill-btn{font-size:.7rem;font-weight:600;padding:.2rem .6rem;border-radius:50px;border:1.5px solid var(--cb);background:var(--bg);color:var(--ink2);cursor:pointer;transition:all .15s;}
+.pill-btn:hover{border-color:var(--am);color:var(--am);}
+.pill-btn--del{border-color:rgba(184,50,50,.3);color:var(--rd);}
+.pill-btn--vf{border-color:rgba(46,125,82,.3);color:var(--gn);}
+
+/* PASSWORD FIELD */
+.pass-wrap{position:relative;}
+.pass-wrap .fi{padding-right:2.5rem;}
+.pass-eye{position:absolute;right:.65rem;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:1rem;color:var(--ink3);padding:.1rem;}
+
+/* LAYOUT */
+.layout{max-width:1280px;margin:0 auto;padding:1.5rem;display:grid;grid-template-columns:1fr 255px;gap:1.75rem;}
+.layout-full{max-width:1280px;margin:0 auto;padding:1.5rem;}
+
+/* SIDEBAR */
+.sidebar{display:flex;flex-direction:column;gap:1.2rem;position:sticky;top:118px;height:fit-content;}
+.sblock{background:var(--card);border:1px solid var(--cb);border-radius:var(--r);padding:1rem;box-shadow:var(--sh0);}
+.sblk-title{font-family:var(--sf);font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--ink3);margin-bottom:.8rem;padding-bottom:.4rem;border-bottom:1px solid var(--cb);}
+.side-yr,.trend-row{display:flex;justify-content:space-between;align-items:center;padding:.35rem 0;border-bottom:1px solid var(--bg3);font-size:.82rem;color:var(--ink2);cursor:pointer;}
+.side-yr:last-child,.trend-row:last-child{border-bottom:none;}
+.side-yr:hover{color:var(--am);}
+.trend-t{color:var(--am);font-weight:600;}
+.pill{background:var(--bg2);color:var(--ink3);font-size:.65rem;font-weight:700;border-radius:50px;padding:.08rem .5rem;}
+.dim{color:var(--ink3);font-size:.75rem;}
+
+/* QOTD */
+.qotd-card{background:linear-gradient(135deg,var(--card),var(--bg2));border:2px solid var(--am);border-radius:var(--r);padding:1.1rem;margin-bottom:1.25rem;box-shadow:var(--sh1);}
+.qotd-label{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--am);margin-bottom:.6rem;}
+.qotd-chips{display:flex;gap:.3rem;flex-wrap:wrap;margin-bottom:.6rem;}
+.qotd-text{font-family:var(--sf);font-size:1rem;font-weight:600;line-height:1.5;color:var(--ink);margin-bottom:.75rem;}
+.qotd-foot{display:flex;gap:1rem;font-size:.78rem;}
+.qotd-prob{color:var(--gn);font-weight:700;}
+.qotd-rep{color:var(--ink3);}
+
+/* FILTERS */
+.filters{background:var(--card);border:1px solid var(--cb);border-radius:var(--r);padding:.85rem 1rem;margin-bottom:1.2rem;display:flex;flex-wrap:wrap;gap:.55rem;align-items:center;box-shadow:var(--sh0);position:sticky;top:108px;z-index:40;backdrop-filter:blur(12px);}
+.fsel,.finp{font-family:var(--ss);font-size:.82rem;background:var(--bg);border:1px solid var(--cb);color:var(--ink);border-radius:6px;padding:.4rem .7rem;outline:none;transition:border-color .2s;}
+.fsel:focus,.finp:focus{border-color:var(--am);}
+.finp{flex:1;min-width:140px;}
+.fsel option{background:var(--card);}
+
+/* SEC HEADING */
+.sec-hd{display:flex;align-items:baseline;gap:.7rem;margin-bottom:1.1rem;}
+.sec-hd h2{font-family:var(--sf);font-size:1.3rem;font-weight:700;color:var(--ink);}
+.sec-hd hr{flex:1;border:none;border-top:1px solid var(--cb);}
+
+/* QUESTION CARDS */
+.feed-grid,.bm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(295px,1fr));gap:1rem;}
+.qcard{background:var(--card);border:1px solid var(--cb);border-radius:var(--r);padding:1.1rem;box-shadow:var(--sh0);transition:box-shadow .2s,transform .2s;display:flex;flex-direction:column;gap:.52rem;position:relative;}
+.qcard:hover{box-shadow:var(--sh1);transform:translateY(-2px);}
+.qcard-feat{border-top:3px solid var(--am);}
+.qcard-prob-high{border-left:3px solid var(--rd);}
+.qcard-prob-med{border-left:3px solid var(--am);}
+.qcard-prob-low{border-left:3px solid var(--gn);}
+.qcard-pinned{border:2px solid var(--am);background:linear-gradient(135deg,var(--card),var(--bg2));}
+.qcard-verified{border-left:3px solid var(--gn);}
+.pin-tag{font-size:.62rem;font-weight:700;color:var(--am);text-transform:uppercase;letter-spacing:.5px;}
+.qcard-head{display:flex;align-items:flex-start;justify-content:space-between;gap:.4rem;flex-wrap:wrap;}
+.chips{display:flex;flex-wrap:wrap;gap:.28rem;}
+.chip{font-size:.6rem;font-weight:700;letter-spacing:.4px;text-transform:uppercase;border-radius:4px;padding:.12rem .42rem;}
+.chip-yr{background:var(--gnb);color:var(--gn);}
+.chip-br{background:var(--blb);color:var(--bl);}
+.chip-ex{background:var(--amb);color:var(--am);}
+.chip-vf{background:var(--gnb);color:var(--gn);}
+.chip-anon{background:var(--bg3);color:var(--ink3);}
+.chip-easy{background:rgba(46,125,82,.12);color:var(--gn);}
+.chip-med{background:rgba(180,130,63,.12);color:var(--am);}
+.chip-hard{background:rgba(184,50,50,.1);color:var(--rd);}
+.badge{font-size:.62rem;font-weight:700;border-radius:50px;padding:.12rem .5rem;white-space:nowrap;}
+.badge-hot{background:#fff0e6;color:#cc5500;border:1px solid rgba(204,85,0,.2);}
+.badge-high{background:#e8f5ee;color:var(--gn);border:1px solid rgba(46,125,82,.2);}
+.badge-sure{background:#fffbe6;color:#8a6000;border:1px solid rgba(180,130,63,.3);}
+[data-theme="dark"] .badge-hot{background:rgba(204,85,0,.15);}
+[data-theme="dark"] .badge-high{background:rgba(46,125,82,.15);}
+[data-theme="dark"] .badge-sure{background:rgba(180,130,63,.15);}
+.bmbtn{background:none;border:none;cursor:pointer;font-size:.95rem;padding:.1rem;line-height:1;transition:transform .2s;}
+.bmbtn:hover{transform:scale(1.25);}
+.bm-on{filter:drop-shadow(0 0 3px var(--am));}
+.qtext{font-family:var(--sf);font-size:.96rem;font-weight:600;line-height:1.5;color:var(--ink);word-break:break-word;overflow-wrap:anywhere;}
+.qmeta{font-size:.74rem;color:var(--ink3);}
+.qmeta em{color:var(--am);font-style:normal;font-weight:600;}
+.qans{font-size:.78rem;border:1px solid var(--cb);border-radius:6px;padding:.42rem .68rem;background:var(--bg);}
+.qans summary{cursor:pointer;font-weight:600;color:var(--am);font-size:.76rem;user-select:none;list-style:none;}
+.qans summary::-webkit-details-marker{display:none;}
+.qans p{margin-top:.4rem;color:var(--ink2);line-height:1.55;}
+.read-time{font-size:.62rem;color:var(--ink4);font-weight:400;}
+.ai-check{background:var(--gnb);color:var(--gn);font-size:.62rem;border-radius:4px;padding:.08rem .35rem;margin-left:.3rem;}
+.qans-wrap{border:1px solid var(--cb);border-radius:8px;overflow:hidden;background:var(--bg);}
+.qans-header{display:flex;justify-content:space-between;align-items:center;padding:.5rem .75rem;cursor:pointer;font-weight:600;font-size:.78rem;color:var(--am);user-select:none;transition:background .15s;}
+.qans-header:hover{background:var(--amb);}
+.qans-open .qans-header{background:var(--amb);}
+.qans-chevron{font-size:.6rem;transition:transform .25s;color:var(--ink3);}
+.qans-body{padding:.6rem .75rem;border-top:1px solid var(--cb);}
+.qans-preview{font-size:.82rem;color:var(--ink2);line-height:1.6;}
+.qans-full{font-size:.82rem;color:var(--ink2);line-height:1.6;white-space:pre-wrap;}
+.qans-more{background:none;border:none;color:var(--am);font-size:.75rem;font-weight:600;cursor:pointer;padding:.35rem 0 0;display:block;}
+.qans-more:hover{text-decoration:underline;}
+.ai-gen-btn{background:var(--blb);color:var(--bl);border:1px solid rgba(42,95,173,.25);border-radius:6px;padding:.25rem .6rem;font-size:.72rem;font-weight:600;cursor:pointer;transition:all .15s;align-self:flex-start;}
+.ai-gen-btn:hover{background:var(--bl);color:#fff;}
+.ai-gen-btn:disabled{opacity:.6;cursor:not-allowed;}
+.qtags{display:flex;flex-wrap:wrap;gap:.28rem;}
+.tag{font-size:.62rem;background:var(--bg2);color:var(--ink3);border-radius:4px;padding:.1rem .42rem;}
+.qfoot{display:flex;align-items:center;gap:.55rem;margin-top:auto;padding-top:.42rem;border-top:1px solid var(--bg3);flex-wrap:wrap;}
+.meter{display:flex;align-items:center;gap:.32rem;flex:1;min-width:110px;}
+.mnum{font-family:var(--sf);font-size:1.15rem;font-weight:700;color:var(--am);line-height:1;min-width:20px;}
+.mbar{flex:1;height:5px;background:var(--bg3);border-radius:50px;overflow:hidden;}
+.mfill{height:100%;border-radius:50px;background:linear-gradient(90deg,var(--am),var(--gn));transition:width .5s ease;}
+.mpct{font-size:.66rem;font-weight:700;color:var(--gn);min-width:28px;}
+.qacts{display:flex;gap:.28rem;flex-shrink:0;flex-wrap:wrap;}
+.abtn{font-size:.65rem;font-weight:600;padding:.16rem .5rem;border-radius:50px;cursor:pointer;transition:all .15s;border:1.5px solid transparent;}
+.abtn-rep{background:var(--amb);color:var(--am);border-color:rgba(180,130,63,.3);}.abtn-rep:hover{background:var(--am);color:#fff;}
+.abtn-up{background:var(--bg2);color:var(--ink3);border-color:var(--cb);}.abtn-up:hover{border-color:var(--bl);color:var(--bl);}
+.abtn-up-on{background:var(--blb);color:var(--bl);border-color:var(--bl);}
+.abtn-cmt{background:var(--bg2);color:var(--ink3);border-color:var(--cb);}.abtn-cmt:hover{border-color:var(--gn);color:var(--gn);}
+.abtn-ed{background:var(--blb);color:var(--bl);border-color:rgba(42,95,173,.25);}
+.abtn-dl{background:var(--rdb);color:var(--rd);border-color:rgba(184,50,50,.25);}
+.abtn-vf{background:var(--gnb);color:var(--gn);border-color:rgba(46,125,82,.25);}
+.abtn-pin{background:var(--amb);color:var(--am);border-color:rgba(180,130,63,.25);}
+.abtn-wa{background:rgba(37,211,102,.1);color:#25d366;border-color:rgba(37,211,102,.3);}.abtn-wa:hover{background:#25d366;color:#fff;}
+.abtn-exam{background:var(--blb);color:var(--bl);border-color:rgba(42,95,173,.25);}.abtn-exam:hover{background:var(--bl);color:#fff;}
+.qposter{font-size:.65rem;color:var(--ink4);}
+.empty-state{text-align:center;padding:2.5rem;color:var(--ink3);grid-column:1/-1;}
+.empty-state span{font-size:1.8rem;display:block;margin-bottom:.45rem;}
+.skel-card{background:var(--card);border:1px solid var(--cb);border-radius:var(--r);padding:1.1rem;height:180px;position:relative;overflow:hidden;}
+.skel-card::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.08),transparent);animation:skel 1.4s infinite;}
+[data-theme="light"] .skel-card::after{background:linear-gradient(90deg,transparent,rgba(255,255,255,.6),transparent);}
+@keyframes skel{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+
+/* CHART */
+.chart-wrap{background:var(--card);border:1px solid var(--cb);border-radius:var(--r);padding:1.2rem;box-shadow:var(--sh0);}
+
+/* NOTES */
+.notes-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;}
+.note-card{background:var(--card);border:1px solid var(--cb);border-radius:var(--r);padding:1rem;box-shadow:var(--sh0);display:flex;gap:.85rem;transition:box-shadow .2s;}
+.note-card:hover{box-shadow:var(--sh1);}
+.note-icon{font-size:2rem;flex-shrink:0;}
+.note-body{flex:1;min-width:0;}
+.note-title{font-family:var(--sf);font-size:.95rem;font-weight:700;color:var(--ink);margin-bottom:.4rem;word-break:break-word;}
+.note-meta{display:flex;flex-wrap:wrap;gap:.25rem;margin-bottom:.3rem;}
+.note-topic{font-size:.75rem;color:var(--ink3);margin-bottom:.3rem;}
+.note-foot{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;}
+.note-by{font-size:.7rem;color:var(--ink4);flex:1;}
+.note-time{font-size:.7rem;color:var(--ink4);}
+
+/* TIMETABLE */
+.tt-card{background:var(--card);border:1px solid var(--cb);border-radius:var(--r);padding:1.1rem;box-shadow:var(--sh0);margin-bottom:1rem;}
+.tt-head{display:flex;justify-content:space-between;align-items:flex-start;gap:.75rem;margin-bottom:.75rem;}
+.tt-title{font-family:var(--sf);font-size:1rem;font-weight:700;color:var(--ink);}
+.tt-meta{font-size:.75rem;color:var(--ink3);margin-top:.2rem;}
+.tt-ai{background:var(--blb);border:1px solid rgba(42,95,173,.2);border-radius:8px;padding:.75rem 1rem;}
+.tt-ai-title{font-size:.72rem;font-weight:700;color:var(--bl);text-transform:uppercase;letter-spacing:.5px;margin-bottom:.4rem;}
+.tt-ai-body{font-size:.85rem;color:var(--ink2);line-height:1.6;}
+/* Timetable Visual Grid */
+.tt-grid-wrap{margin-top:.75rem;}
+.tt-scroll-x{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:10px;border:1px solid var(--cb);}
+.tt-table{width:100%;border-collapse:collapse;font-size:.78rem;min-width:600px;}
+.tt-table thead{background:var(--amb);color:#fff;}
+.tt-th-day{padding:.5rem .75rem;text-align:left;font-weight:700;font-size:.7rem;white-space:nowrap;min-width:90px;}
+.tt-th-time{padding:.5rem .6rem;text-align:center;font-weight:600;font-size:.68rem;white-space:nowrap;border-left:1px solid rgba(255,255,255,.2);}
+.tt-table tbody tr{border-bottom:1px solid var(--cb);}
+.tt-table tbody tr:last-child{border-bottom:none;}
+.tt-day-label{padding:.5rem .75rem;font-weight:700;font-size:.78rem;color:var(--ink2);white-space:nowrap;background:var(--bg2);border-right:1px solid var(--cb);}
+.tt-today-label{color:var(--amb);background:rgba(180,130,63,.08);}
+.tt-row-today td{background:rgba(180,130,63,.06)!important;}
+.tt-today-badge{display:inline-block;background:var(--amb);color:#fff;font-size:.6rem;padding:.1rem .35rem;border-radius:20px;margin-left:.3rem;vertical-align:middle;font-weight:700;}
+.tt-cell{padding:.45rem .5rem;text-align:center;border-left:1px solid var(--cb);vertical-align:middle;}
+.tt-cell-empty{color:var(--ink3);font-size:.75rem;}
+.tt-cell-sub{font-weight:600;color:var(--ink);font-size:.78rem;line-height:1.3;}
+.tt-cell-teacher{font-size:.65rem;color:var(--ink3);margin-top:.15rem;}
+.tt-cell-room{font-size:.62rem;color:var(--ink3);}
+.tt-notes{margin-top:.6rem;font-size:.75rem;color:var(--ink3);padding:.5rem .75rem;background:var(--bg2);border-radius:6px;}
+/* Extract button */
+.tt-extract-btn{padding:.3rem .8rem;font-size:.75rem;background:var(--blb);color:var(--bl);border:1px solid rgba(42,95,173,.3);border-radius:6px;cursor:pointer;font-weight:600;transition:all .2s;}
+.tt-extract-btn:hover{background:var(--bl);color:#fff;}
+.tt-extract-btn:disabled{opacity:.6;cursor:not-allowed;}
+/* Loading skeleton */
+.tt-loading{padding:1rem;display:flex;flex-direction:column;gap:.75rem;align-items:center;}
+.tt-loading-spinner{width:32px;height:32px;border:3px solid var(--cb);border-top-color:var(--amb);border-radius:50%;animation:ttspin .8s linear infinite;}
+@keyframes ttspin{to{transform:rotate(360deg)}}
+.tt-loading-text{text-align:center;}
+.tt-loading-label{display:block;font-size:.85rem;font-weight:600;color:var(--ink);}
+.tt-loading-sub{display:block;font-size:.72rem;color:var(--ink3);margin-top:.2rem;}
+.tt-skeleton-wrap{width:100%;display:flex;flex-direction:column;gap:.4rem;margin-top:.25rem;}
+.tt-skel-row{display:flex;gap:.4rem;}
+.tt-skel-cell{flex:1;height:38px;background:linear-gradient(90deg,var(--cb) 25%,var(--bg2) 50%,var(--cb) 75%);background-size:200% 100%;border-radius:5px;animation:ttshimmer 1.4s infinite;}
+.tt-skel-row:first-child .tt-skel-cell{height:28px;background:linear-gradient(90deg,var(--amb) 25%,rgba(180,130,63,.5) 50%,var(--amb) 75%);background-size:200% 100%;}
+@keyframes ttshimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.tt-result-area{transition:opacity .4s;}
+
+/* PROFILE */
+.profile-card{background:var(--card);border:1px solid var(--cb);border-radius:16px;padding:2rem;text-align:center;box-shadow:var(--sh1);max-width:480px;margin:0 auto 1.5rem;}
+.profile-av{width:72px;height:72px;border-radius:50%;background:var(--am);color:#fff;font-family:var(--sf);font-size:2rem;font-weight:700;display:grid;place-items:center;margin:0 auto .75rem;}
+.profile-name{font-family:var(--sf);font-size:1.4rem;font-weight:700;}
+.profile-roll{font-size:.8rem;color:var(--ink3);margin-bottom:.5rem;}
+.profile-chips{display:flex;gap:.3rem;justify-content:center;flex-wrap:wrap;}
+.profile-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem;margin:.9rem 0;}
+.pstat{background:var(--bg2);border-radius:8px;padding:.7rem .5rem;text-align:center;}
+.pstat b{font-family:var(--sf);font-size:1.3rem;font-weight:700;color:var(--am);display:block;}
+.pstat small{font-size:.68rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.5px;}
+.profile-badges{display:flex;flex-wrap:wrap;gap:.4rem;justify-content:center;}
+.pbadge{background:var(--amb);color:var(--am);border:1px solid rgba(180,130,63,.3);border-radius:50px;padding:.2rem .65rem;font-size:.72rem;font-weight:600;}
+
+/* FLASHCARD */
+.flash-wrap{max-width:620px;margin:0 auto;}
+.flash-meta{display:flex;flex-wrap:wrap;gap:.3rem;margin-bottom:1rem;}
+.flash-progress-bar{background:var(--bg3);border-radius:50px;height:6px;margin-bottom:1.5rem;overflow:hidden;}
+#flashProgress{height:100%;background:linear-gradient(90deg,var(--am),var(--gn));border-radius:50px;transition:width .3s;}
+#flashCard{background:var(--card);border:1px solid var(--cb);border-radius:16px;padding:2rem;min-height:220px;box-shadow:var(--sh1);margin-bottom:1.25rem;}
+.flash-q{font-family:var(--sf);font-size:1.2rem;font-weight:600;line-height:1.55;color:var(--ink);margin-bottom:1rem;}
+.flash-ans{background:var(--gnb);border:1px solid rgba(46,125,82,.25);border-radius:10px;padding:1rem;margin-top:1rem;font-size:.9rem;color:var(--ink2);line-height:1.6;}
+.flash-ans-label{font-weight:700;color:var(--gn);margin-bottom:.4rem;font-size:.78rem;text-transform:uppercase;letter-spacing:.5px;}
+.flash-reveal{background:var(--am);color:#fff;border:none;border-radius:8px;padding:.6rem 1.4rem;font-weight:700;cursor:pointer;margin-top:1rem;font-size:.9rem;}
+.flash-controls{display:flex;gap:.75rem;justify-content:center;flex-wrap:wrap;}
+.flash-count{text-align:center;font-size:.8rem;color:var(--ink3);margin-bottom:.5rem;}
+
+/* ANALYTICS */
+.astat-row{display:flex;align-items:center;gap:.75rem;padding:.5rem 0;border-bottom:1px solid var(--bg3);}
+.astat-name{font-size:.82rem;color:var(--ink2);min-width:150px;}
+.astat-bar-wrap{flex:1;background:var(--bg3);border-radius:50px;height:10px;overflow:hidden;}
+.astat-bar{height:100%;background:linear-gradient(90deg,var(--am),var(--gn));border-radius:50px;}
+.astat-count{font-weight:700;font-size:.82rem;color:var(--am);min-width:24px;text-align:right;}
+
+/* HISTORY TABLE */
+.tscroll{overflow-x:auto;}
+table{width:100%;border-collapse:collapse;}
+thead tr{border-bottom:2px solid var(--cb);}
+th{font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--ink3);padding:.6rem .8rem;text-align:left;white-space:nowrap;background:var(--card);}
+td{font-size:.8rem;padding:.55rem .8rem;border-bottom:1px solid var(--bg3);color:var(--ink2);}
+tbody tr:hover td{background:var(--bg);}
+.td-q{max-width:200px;}
+.td-prob{color:var(--gn);font-weight:700;}
+
+/* AUTH */
+.auth-page{min-height:calc(100vh - 160px);display:flex;align-items:center;justify-content:center;padding:2rem;background:var(--bg2);}
+.auth-card{background:var(--card);border:1px solid var(--cb);border-radius:16px;padding:2.25rem;width:100%;max-width:440px;box-shadow:var(--sh2);}
+.auth-logo{font-family:var(--sf);font-size:1.5rem;font-weight:700;color:var(--ink);margin-bottom:.2rem;}
+.auth-logo em{color:var(--am);font-style:normal;}
+.auth-sub{font-size:.68rem;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:1.35rem;}
+.auth-notice{background:var(--amb);border:1px solid rgba(180,130,63,.25);border-radius:8px;padding:.58rem .85rem;font-size:.77rem;color:var(--am);margin-bottom:1.1rem;line-height:1.5;}
+.auth-switch{text-align:center;margin-top:1rem;font-size:.82rem;color:var(--ink3);}
+.auth-switch a{color:var(--am);cursor:pointer;font-weight:600;}
+.sec-lbl{font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--ink3);margin-bottom:.52rem;margin-top:.65rem;}
+
+/* FORM */
+.ff{margin-bottom:.88rem;}
+.fl{display:block;font-size:.7rem;font-weight:600;color:var(--ink3);margin-bottom:.28rem;text-transform:uppercase;letter-spacing:.5px;}
+.fi,.fs,.fta{width:100%;font-family:var(--ss);font-size:.88rem;background:var(--bg);border:1.5px solid var(--cb);color:var(--ink);border-radius:8px;padding:.55rem .8rem;outline:none;transition:border-color .2s;}
+.fi:focus,.fs:focus,.fta:focus{border-color:var(--am);background:var(--card);}
+.fs option{background:var(--card);}
+.fta{resize:vertical;min-height:82px;line-height:1.5;}
+.fg{display:grid;grid-template-columns:1fr 1fr;gap:.68rem;}
+.fchk{display:flex;align-items:flex-start;gap:.42rem;font-size:.83rem;cursor:pointer;color:var(--ink2);line-height:1.4;}
+.fchk input{accent-color:var(--am);width:14px;height:14px;flex-shrink:0;margin-top:2px;}
+
+.img-up{border:2px dashed var(--cb);border-radius:8px;padding:.75rem;text-align:center;cursor:pointer;transition:border-color .2s;position:relative;}
+.img-up:hover{border-color:var(--am);}
+.img-up input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
+.img-up-lbl{font-size:.8rem;color:var(--ink3);}
+/* MODAL */
+.modal-overlay{position:fixed;inset:0;z-index:300;background:rgba(10,8,6,.6);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;padding:1rem;}
+.modal-overlay.open{display:flex;}
+.modal-box{background:var(--card);border-radius:16px;border:1px solid var(--cb);padding:1.75rem;width:100%;max-width:560px;max-height:92vh;overflow-y:auto;box-shadow:var(--sh2);position:relative;}
+.modal-hd{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.3rem;}
+.modal-title{font-family:var(--sf);font-size:1.25rem;font-weight:700;color:var(--ink);}
+.modal-sub{font-size:.77rem;color:var(--ink3);margin-top:.18rem;}
+.mclose{background:var(--bg);border:1px solid var(--cb);border-radius:50%;width:30px;height:30px;display:grid;place-items:center;cursor:pointer;font-size:.88rem;color:var(--ink3);flex-shrink:0;}
+.mclose:hover{background:var(--cb);}
+.msec{font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--ink3);margin:1.1rem 0 .68rem;padding-top:.95rem;border-top:1px solid var(--cb);}
+.msec:first-of-type{margin-top:0;padding-top:0;border-top:none;}
+
+/* COMMENTS */
+.cmt-box{max-width:500px;display:flex;flex-direction:column;height:68vh;}
+#cmtList{flex:1;overflow-y:auto;padding:.45rem 0;display:flex;flex-direction:column;gap:.55rem;}
+.cmt{background:var(--bg);border-radius:8px;padding:.6rem .78rem;border:1px solid var(--cb);}
+.cmt-head{display:flex;align-items:center;gap:.45rem;margin-bottom:.28rem;}
+.cmt-auth{font-weight:700;font-size:.76rem;color:var(--am);}
+.cmt-time{font-size:.68rem;color:var(--ink4);flex:1;}
+.cmt-del{background:none;border:none;cursor:pointer;color:var(--rd);font-size:.88rem;}
+.cmt-body{font-size:.82rem;color:var(--ink2);line-height:1.5;}
+.cmt-empty{text-align:center;color:var(--ink3);font-size:.83rem;padding:1.5rem;}
+.cmt-inp-wrap{display:flex;gap:.45rem;margin-top:.7rem;flex-shrink:0;padding-top:.7rem;border-top:1px solid var(--cb);}
+#cmtInput{flex:1;font-family:var(--ss);font-size:.84rem;background:var(--bg);border:1.5px solid var(--cb);color:var(--ink);border-radius:8px;padding:.48rem .72rem;outline:none;resize:none;}
+#cmtInput:focus{border-color:var(--am);}
+#cmtBtn{background:var(--am);color:#fff;border:none;border-radius:8px;padding:.48rem .88rem;cursor:pointer;font-weight:700;font-size:.8rem;flex-shrink:0;}
+
+/* ADMIN */
+.admin-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:.9rem;margin-bottom:1.5rem;}
+.a-stat{background:var(--card);border:1px solid var(--cb);border-radius:var(--r);padding:1.1rem;text-align:center;box-shadow:var(--sh0);}
+.a-stat-n{font-family:var(--sf);font-size:2.1rem;font-weight:700;color:var(--am);}
+.a-stat-l{font-size:.65rem;text-transform:uppercase;letter-spacing:1px;color:var(--ink3);margin-top:.2rem;}
+.admin-section{background:var(--card);border:1px solid var(--cb);border-radius:var(--r);padding:1.25rem;box-shadow:var(--sh0);margin-bottom:1.25rem;}
+.admin-section-title{font-family:var(--sf);font-size:1rem;font-weight:700;color:var(--am);margin-bottom:1rem;}
+.admin-row{background:var(--bg);border:1px solid var(--cb);border-radius:8px;padding:.78rem .9rem;margin-bottom:.5rem;}
+.admin-q{font-size:.83rem;color:var(--ink);margin-bottom:.22rem;font-weight:500;}
+.admin-meta{font-size:.7rem;color:var(--ink3);margin-bottom:.42rem;}
+.admin-acts{display:flex;gap:.38rem;flex-wrap:wrap;}
+
+/* PDF SECTION */
+.pdf-section{background:var(--card);border:1px solid var(--cb);border-radius:var(--r);padding:1.25rem;box-shadow:var(--sh0);margin-bottom:1.5rem;}
+
+/* FAB */
+.fab{position:fixed;bottom:1.75rem;right:1.75rem;z-index:100;background:var(--ink);color:#f0e8dc;border:none;border-radius:50px;padding:.72rem 1.3rem;font-family:var(--ss);font-weight:700;font-size:.86rem;cursor:pointer;display:none;align-items:center;gap:.42rem;box-shadow:0 4px 20px rgba(0,0,0,.28);transition:all .2s;}
+.fab:hover{background:var(--am);transform:translateY(-2px);box-shadow:0 8px 28px rgba(180,130,63,.45);}
+
+/* MOBILE BOTTOM NAV */
+.mob-nav{display:none;position:fixed;bottom:0;left:0;right:0;z-index:200;background:var(--card);border-top:1px solid var(--cb);padding:.5rem .5rem calc(.5rem + env(safe-area-inset-bottom));box-shadow:0 -4px 20px rgba(0,0,0,.12);}
+.mob-nav{display:none;grid-template-columns:repeat(5,1fr);}
+.mob-nav-item{display:flex;flex-direction:column;align-items:center;gap:.18rem;background:none;border:none;cursor:pointer;padding:.4rem .2rem;border-radius:10px;transition:all .2s;color:var(--ink3);}
+.mob-nav-item.active{color:var(--am);}
+.mob-nav-item.active .mob-nav-icon{transform:translateY(-2px);}
+.mob-nav-icon{font-size:1.25rem;line-height:1;transition:transform .2s;}
+.mob-nav-label{font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.3px;}
+.mob-nav-post{background:var(--am);border-radius:14px;padding:.5rem .4rem;color:#fff !important;margin-top:-16px;box-shadow:0 4px 16px rgba(180,130,63,.45);}
+.mob-nav-plus{font-size:1.5rem;font-weight:300;}
+@media(max-width:768px){
+  .mob-nav{display:grid;}
+  .fab{display:none !important;}
+  body{padding-bottom:72px;}
+  .mast-college{display:none;}
+  .mast-nav{display:none;}
+  .filters{top:64px;}
+}
+/* TOAST */
+#toastBox{position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:.42rem;z-index:500;pointer-events:none;align-items:center;width:max-content;max-width:90vw;}
+.toast{background:var(--mast);color:#f0e8dc;border-radius:8px;padding:.62rem 1.15rem;font-size:.8rem;box-shadow:var(--sh2);opacity:0;transform:translateY(8px);transition:all .3s;pointer-events:none;border-left:3px solid var(--am);}
+.toast.in{opacity:1;transform:translateY(0);}
+.toast-success{border-left-color:var(--gn);}
+.toast-error{border-left-color:var(--rd);background:#1e0808;}
+.toast-warn{border-left-color:var(--aml);}
+
+input[type="hidden"]{display:none;}
+
+/* ABOUT SECTION */
+.about-section{background:var(--card);border:1px solid var(--cb);border-radius:var(--r);padding:1.5rem;box-shadow:var(--sh0);}
+.about-feature{display:flex;gap:.75rem;padding:.75rem 0;border-bottom:1px solid var(--bg3);}
+.about-feature:last-child{border-bottom:none;}
+.about-icon{font-size:1.4rem;flex-shrink:0;width:36px;text-align:center;}
+.about-text h4{font-family:var(--sf);font-weight:700;font-size:.95rem;color:var(--ink);margin-bottom:.2rem;}
+.about-text p{font-size:.82rem;color:var(--ink3);line-height:1.55;}
+
+/* RESPONSIVE */
+@media(max-width:960px){.layout{grid-template-columns:1fr;}.sidebar{display:none;}.admin-stats{grid-template-columns:1fr 1fr;}}
+@media(max-width:600px){
+  .mast-name{font-size:1.3rem;}.mast-top{padding:.65rem 1rem .3rem;}.mast-college{display:none;}
+  .feed-grid,.bm-grid,.notes-grid{grid-template-columns:1fr;}.fg{grid-template-columns:1fr;}
+  .fab{bottom:1rem;right:1rem;padding:.62rem 1rem;font-size:.8rem;}
+  .auth-card,.modal-box{padding:1.35rem 1.1rem;}.nav-link{font-size:.68rem;padding:.52rem .65rem;}
+  .profile-stats{grid-template-columns:repeat(3,1fr);}
+}
+</style>
+</head>
+<body>
+
+<!-- ANNOUNCEMENT -->
+<div id="announcementBar">
+  <span>📢</span><span id="announcementText"></span>
+  <button onclick="window._closeAnnouncement()">×</button>
+</div>
+
+<!-- MASTHEAD -->
+<header class="mast">
+  <div class="mast-top">
+    <div class="mast-brand">
+      <div class="mast-name">Prob<em>Q</em>&nbsp;2026</div>
+      <div class="mast-college">Amrutvahini College of Engineering &middot; Student Portal</div>
+    </div>
+    <div class="mast-ctrl">
+      <button id="installBtn">📲 Install</button>
+      <button class="ibtn" id="darkToggle" onclick="window._toggleDark()" title="Toggle theme">🌙</button>
+    </div>
+    <div id="navUser"></div>
+  </div>
+  <nav class="mast-nav">
+    <button class="nav-link active" id="nav_home"      onclick="page('home')">Questions</button>
+    <button class="nav-link"       id="nav_notes"      onclick="page('notes')">📝 Notes</button>
+    <button class="nav-link"       id="nav_timetable"  onclick="page('timetable')">📅 Timetable</button>
+    <button class="nav-link"       id="nav_revision"   onclick="page('revision')">🃏 Revision</button>
+    <button class="nav-link"       id="nav_analytics"  onclick="page('analytics')">📊 Analytics</button>
+    <button class="nav-link"       id="nav_history"    onclick="page('history')">History</button>
+    <button class="nav-link"       id="nav_pdf"        onclick="page('pdf')">📄 PDF</button>
+    <button class="nav-link"       id="navBm"          onclick="page('bookmarks')" style="display:none">🔖 Saved</button>
+    <button class="nav-link"       id="navProfile"     onclick="page('profile')" style="display:none">👤 Profile</button>
+    <button class="nav-link"       id="nav_about"      onclick="page('about')">ℹ About</button>
+    <button class="nav-link"       id="navAdmin"       onclick="page('admin')" style="display:none">⚙ Admin</button>
+  </nav>
+</header>
+
+<!-- COUNTDOWN -->
+<div class="cd-bar">
+  <div class="cd-inner">
+    <span class="cd-lbl" id="cdLabel">📅 Endsem Countdown:</span>
+    <div id="countdown"></div>
+    <button class="trend-week-btn" onclick="window._filterWeek()" style="margin-left:auto">
+      🔥 Trending This Week <span id="trendingBadge" class="nav-badge" style="display:none;position:relative;top:0;right:0"></span>
+    </button>
+  </div>
+</div>
+
+<!-- ═══ HOME ═══ -->
+<div id="homePage" class="page">
+  <div class="layout">
+    <div>
+      <div id="qotdCard" class="qotd-card"></div>
+      <div class="filters">
+        <select class="fsel" id="fYear"><option value="">All Years</option><option>FY</option><option>SY</option><option>TY</option><option>BE</option></select>
+        <select class="fsel" id="fBranch">
+          <option value="">All Branches</option>
+          <option>Computer Engineering</option><option>Information Technology</option>
+          <option>Mechanical Engineering</option><option>Civil Engineering</option>
+          <option>Electrical Engineering</option><option>Electronics &amp; Telecom</option>
+          <option>AIDS</option><option>Chemical Engineering</option>
+        </select>
+        <select class="fsel" id="fDiff"><option value="">All Difficulty</option><option>Easy</option><option>Medium</option><option>Hard</option></select>
+        <input class="finp" id="fSubject" placeholder="Filter by subject&hellip;">
+        <input class="finp" id="fSearch"  placeholder="&#128269; Search questions, topics, tags&hellip;">
+        <select class="fsel" id="fSort">
+          <option value="repeats">&#x1F501; Most Repeated</option>
+          <option value="newest">&#x1F552; Newest First</option>
+          <option value="upvotes">&#x1F44D; Most Upvoted</option>
+          <option value="discussed">&#x1F4AC; Most Discussed</option>
+        </select>
+      </div>
+      <div class="sec-hd"><h2>Most Probable Questions</h2><hr></div>
+      <div class="feed-grid" id="feedGrid"><div class="skel-card"></div><div class="skel-card"></div><div class="skel-card"></div></div>
+      <div class="chart-wrap" style="margin-top:1.75rem">
+        <div class="sec-hd" style="margin-bottom:.9rem"><h2 style="font-size:1.1rem">Topic Frequency</h2><hr></div>
+        <canvas id="topicChart" height="80"></canvas>
+      </div>
+    </div>
+    <aside class="sidebar">
+      <div class="sblock"><div class="sblk-title">By Year</div><div id="sideYears"></div></div>
+      <div class="sblock"><div class="sblk-title">🔥 Trending Topics</div><div id="sideTrend"></div></div>
+      <div class="sblock">
+        <div class="sblk-title">Quick Links</div>
+        <div style="display:flex;flex-direction:column;gap:.4rem">
+          <button class="btn btn-outline" style="text-align:left;justify-content:flex-start" onclick="page('notes')">📝 Upload Notes</button>
+          <button class="btn btn-outline" style="text-align:left;justify-content:flex-start" onclick="page('timetable')">📅 View Timetable</button>
+          <button class="btn btn-outline" style="text-align:left;justify-content:flex-start" onclick="page('revision')">🃏 Start Revision</button>
+          <button class="btn btn-outline" style="text-align:left;justify-content:flex-start" onclick="page('pdf')">📄 Export PDF</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<!-- ═══ NOTES ═══ -->
+<div id="notesPage" class="page" hidden>
+  <div class="layout-full">
+    <div class="sec-hd">
+      <h2>📝 Student Notes</h2><hr>
+      <button class="btn btn-amber" onclick="openNoteModal()">+ Upload Notes</button>
+    </div>
+    <div class="filters" style="margin-bottom:1.25rem">
+      <select class="fsel" id="noteFilterYear"><option value="">All Years</option><option>FY</option><option>SY</option><option>TY</option><option>BE</option></select>
+      <select class="fsel" id="noteFilterBranch">
+        <option value="">All Branches</option>
+        <option>Computer Engineering</option><option>Information Technology</option>
+        <option>Mechanical Engineering</option><option>Civil Engineering</option>
+        <option>Electrical Engineering</option><option>Electronics &amp; Telecom</option>
+        <option>AIDS</option>
+      </select>
+      <input class="finp" id="noteFilterSearch" placeholder="&#128269; Search by subject or topic&hellip;">
+    </div>
+    <div class="notes-grid" id="notesGrid"><div class="empty-state"><span>📝</span><p>Loading notes&hellip;</p></div></div>
+  </div>
+</div>
+
+<!-- ═══ TIMETABLE ═══ -->
+<div id="timetablePage" class="page" hidden>
+  <div class="layout-full">
+    <div class="sec-hd">
+      <h2>📅 Division Timetable</h2><hr>
+      <button class="btn btn-amber" onclick="openTTModal()">+ Upload Timetable</button>
+    </div>
+    <div class="filters" style="margin-bottom:1.25rem">
+      <select class="fsel" id="ttFilterYear"><option value="">All Years</option><option>FY</option><option>SY</option><option>TY</option><option>BE</option></select>
+      <select class="fsel" id="ttFilterBranch">
+        <option value="">All Branches</option>
+        <option>Computer Engineering</option><option>Information Technology</option>
+        <option>Mechanical Engineering</option><option>Civil Engineering</option>
+        <option>Electrical Engineering</option><option>Electronics &amp; Telecom</option>
+        <option>AIDS</option>
+      </select>
+      <input class="finp" id="ttFilterDiv" placeholder="Division (e.g. K, K1)&hellip;" style="max-width:180px">
+    </div>
+    <div id="ttGrid"><div class="empty-state"><span>📅</span><p>Loading timetables&hellip;</p></div></div>
+  </div>
+</div>
+
+<!-- ═══ HISTORY ═══ -->
+<div id="historyPage" class="page" hidden>
+  <div class="layout-full">
+    <div class="sec-hd"><h2>All Questions — Full History</h2><hr></div>
+    <div class="tscroll"><table>
+      <thead><tr><th>Question</th><th>Year</th><th>Branch</th><th>Subject</th><th>Type</th><th>Reps</th><th>Prob%</th></tr></thead>
+      <tbody id="historyBody"></tbody>
+    </table></div>
+  </div>
+</div>
+
+<!-- ═══ BOOKMARKS ═══ -->
+<div id="bookmarksPage" class="page" hidden>
+  <div class="layout-full">
+    <div class="sec-hd"><h2>🔖 My Saved Questions</h2><hr></div>
+    <div class="bm-grid" id="bmGrid"></div>
+  </div>
+</div>
+
+<!-- ═══ PROFILE ═══ -->
+<div id="profilePage" class="page" hidden>
+  <div class="layout-full" style="max-width:800px">
+    <div class="sec-hd"><h2>👤 My Profile</h2><hr></div>
+    <div id="profileContent"></div>
+  </div>
+</div>
+
+<!-- ═══ REVISION ═══ -->
+<div id="revisionPage" class="page" hidden>
+  <div class="layout-full" style="max-width:650px">
+    <div class="sec-hd"><h2>🃏 Flashcard Revision Mode</h2><hr></div>
+    <p style="font-size:.85rem;color:var(--ink3);margin-bottom:1rem">Cards drawn from your bookmarks and high-repeat questions. Filter then start.</p>
+    <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-bottom:1rem;background:var(--card);border:1px solid var(--cb);border-radius:var(--r);padding:.75rem;">
+      <select class="fsel" id="flashYear" onchange="startRevision()"><option value="">All Years</option><option>FY</option><option>SY</option><option>TY</option><option>BE</option></select>
+      <select class="fsel" id="flashBranch" onchange="startRevision()">
+        <option value="">All Branches</option>
+        <option>Computer Engineering</option><option>Information Technology</option>
+        <option>Mechanical Engineering</option><option>Civil Engineering</option>
+        <option>Electrical Engineering</option><option>Electronics &amp; Telecom</option><option>AIDS</option>
+      </select>
+      <button class="btn btn-amber" onclick="startRevision()">&#9654; Start</button>
+    </div>
+    <div class="flash-count" id="flashCount">0 / 0</div>
+    <div class="flash-progress-bar"><div id="flashProgress" style="width:0%"></div></div>
+    <div id="flashCard"><div class="empty-state"><span>🃏</span><p>Select filters and click Start!</p></div></div>
+    <div class="flash-controls">
+      <button class="btn btn-outline" onclick="window._prevFlash()">&#8592; Prev</button>
+      <button class="btn btn-outline" onclick="window._shuffleFlash()">&#128256; Shuffle</button>
+      <button class="btn btn-amber"   onclick="window._nextFlash()">Next &#8594;</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ ANALYTICS ═══ -->
+<div id="analyticsPage" class="page" hidden>
+  <div class="layout-full" style="max-width:900px">
+    <div class="sec-hd"><h2>📊 Analytics Dashboard</h2><hr></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem">
+      <div class="chart-wrap"><div class="sec-hd" style="margin-bottom:.9rem"><h2 style="font-size:1rem">By Subject</h2><hr></div><canvas id="subjectChart" height="220"></canvas></div>
+      <div><div class="sec-hd"><h2 style="font-size:1rem">Top Subjects by Repeats</h2><hr></div><div id="analyticsStats"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ PDF ═══ -->
+<div id="pdfPage" class="page" hidden>
+  <div class="layout-full" style="max-width:600px">
+    <div class="sec-hd"><h2>📄 Export PDF</h2><hr></div>
+    <div class="pdf-section">
+      <p style="font-size:.82rem;color:var(--ink3);margin-bottom:1rem">Generate a printable A4 PDF of top 15 probable questions. AI answers included!</p>
+      <div class="fg">
+        <div class="ff"><label class="fl">Year</label><select class="fs" id="pdfYear"><option value="">All</option><option>FY</option><option>SY</option><option>TY</option><option>BE</option></select></div>
+        <div class="ff"><label class="fl">Branch</label><select class="fs" id="pdfBranch"><option value="">All</option><option>Computer Engineering</option><option>Information Technology</option><option>Mechanical Engineering</option><option>Civil Engineering</option><option>Electrical Engineering</option><option>Electronics &amp; Telecom</option><option>AIDS</option></select></div>
+      </div>
+      <div class="ff"><label class="fl">Subject (optional)</label><input class="fi" id="pdfSubject" placeholder="e.g. Applied Maths-II"></div>
+      <button class="btn btn-amber btn-full" onclick="window._exportPDF()">&#8595; Download PDF</button>
+    </div>
+    <div style="background:var(--amb);border:1px solid rgba(180,130,63,.25);border-radius:10px;padding:1rem;font-size:.82rem;color:var(--am)">
+      💡 <strong>Tip:</strong> Share the PDF on WhatsApp with your batch!
+    </div>
+  </div>
+</div>
+
+<!-- ═══ ABOUT ═══ -->
+<div id="aboutPage" class="page" hidden>
+  <div class="layout-full" style="max-width:700px">
+    <div class="sec-hd"><h2>ℹ About ProbQ 2026</h2><hr></div>
+    <div class="about-section">
+      <div style="text-align:center;padding:1.5rem 0 2rem;border-bottom:1px solid var(--cb);margin-bottom:1.75rem">
+        <div style="font-family:var(--sf);font-size:3rem;font-weight:900;color:var(--ink);line-height:1">Prob<em style="color:var(--am);font-style:normal">Q</em></div>
+        <div style="font-size:.72rem;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:var(--ink4);margin:.4rem 0 1.1rem">2026 Edition</div>
+        <div style="display:inline-block;background:var(--amb);border:2px solid var(--am);border-radius:50px;padding:.5rem 1.5rem;font-family:var(--sf);font-size:1.1rem;font-weight:700;color:var(--am);letter-spacing:1px;margin-bottom:1.25rem">
+          BY STUDENT &middot; FOR STUDENTS
+        </div>
+        <div style="font-size:.9rem;color:var(--ink3);max-width:540px;margin:0 auto;line-height:1.8">
+          The first crowdsourced exam intelligence platform built exclusively for
+          <strong style="color:var(--ink)">Amrutvahini College of Engineering, Sangamner</strong>.
+          No faculty. No outsiders. Just students helping students ace every paper.
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.9rem;margin-bottom:2rem">
+        <div style="text-align:center;background:var(--bg2);border-radius:var(--r);padding:1rem .5rem">
+          <div style="font-family:var(--sf);font-size:1.9rem;font-weight:700;color:var(--am)">100%</div>
+          <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px;color:var(--ink3);margin-top:.2rem">Student Run</div>
+        </div>
+        <div style="text-align:center;background:var(--bg2);border-radius:var(--r);padding:1rem .5rem">
+          <div style="font-family:var(--sf);font-size:1.9rem;font-weight:700;color:var(--gn)">Free</div>
+          <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px;color:var(--ink3);margin-top:.2rem">Always</div>
+        </div>
+        <div style="text-align:center;background:var(--bg2);border-radius:var(--r);padding:1rem .5rem">
+          <div style="font-family:var(--sf);font-size:1.9rem;font-weight:700;color:var(--bl)">AI</div>
+          <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px;color:var(--ink3);margin-top:.2rem">Powered</div>
+        </div>
+        <div style="text-align:center;background:var(--bg2);border-radius:var(--r);padding:1rem .5rem">
+          <div style="font-family:var(--sf);font-size:1.9rem;font-weight:700;color:var(--rd)">Live</div>
+          <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.5px;color:var(--ink3);margin-top:.2rem">Real-time</div>
+        </div>
+      </div>
+
+      <div style="font-family:var(--sf);font-size:1rem;font-weight:700;color:var(--ink);margin-bottom:1rem">What ProbQ does for you</div>
+      <div class="about-feature"><div class="about-icon">🎯</div><div class="about-text"><h4>Probable Question Prediction</h4><p>Every question tracks repeat appearances across previous papers. Higher repeats = higher probability score. Top questions are ranked so you study exactly what matters most.</p></div></div>
+      <div class="about-feature"><div class="about-icon">🤖</div><div class="about-text"><h4>AI-Generated 6-Mark Answers</h4><p>No answer? One tap generates a structured, exam-ready answer — bullet points, key terms, formatted exactly for 6-mark questions. AI also checks student answers and awards a ✅ Verified badge.</p></div></div>
+      <div class="about-feature"><div class="about-icon">📤</div><div class="about-text"><h4>One-Tap WhatsApp Share</h4><p>Share any probable question directly to your batch group — includes question, AI answer, probability % and repeat count. Spreads the knowledge instantly across your entire batch.</p></div></div>
+      <div class="about-feature"><div class="about-icon">📝</div><div class="about-text"><h4>Confirmed in Exam!</h4><p>After your exam, tap the "📝 In Exam?" button on questions that actually appeared. Builds historical accuracy and makes future predictions sharper for every ACOE student after you.</p></div></div>
+      <div class="about-feature"><div class="about-icon">📒</div><div class="about-text"><h4>Student Notes Library</h4><p>Upload and access notes, PDFs and reference material shared by seniors and batchmates — filtered by year, branch and subject. No more hunting in 10 different WhatsApp groups.</p></div></div>
+      <div class="about-feature"><div class="about-icon">📅</div><div class="about-text"><h4>AI Timetable Reader</h4><p>Upload your division timetable as a photo. AI reads it and shows today's schedule — including K1, K2, K3 subdivision-wise practicals. No more confusion about which lab you have.</p></div></div>
+      <div class="about-feature"><div class="about-icon">🃏</div><div class="about-text"><h4>Flashcard Revision Mode</h4><p>Swipe through probable questions like flashcards. Filter by year and branch. Reveal AI answers one by one. The most effective last-night revision tool built for ACOE students.</p></div></div>
+      <div class="about-feature"><div class="about-icon">📄</div><div class="about-text"><h4>Printable PDF Export</h4><p>One click generates a clean A4 PDF of top 15 probable questions for any subject — with AI answers and probability %. Print it and walk into the exam hall prepared.</p></div></div>
+      <div class="about-feature"><div class="about-icon">🔒</div><div class="about-text"><h4>ACOE Students Only</h4><p>No outsiders. No faculty spying. No spam. Post anonymously if you prefer. This is your secret weapon — built and maintained by a fellow ACOE student, not a company.</p></div></div>
+
+      <div style="text-align:center;margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--cb)">
+        <div style="font-family:var(--sf);font-size:1.3rem;font-weight:900;color:var(--am);margin-bottom:.5rem;letter-spacing:1px">BY STUDENT &middot; FOR STUDENTS</div>
+        <div style="font-size:.82rem;color:var(--ink3)">Amrutvahini College of Engineering, Sangamner</div>
+        <div style="font-size:.75rem;color:var(--ink4);margin-top:.3rem">Built with ❤️ and a lot of exam stress &mdash; Est. 2026</div>
+      </div>
+    </div>  </div>
+</div>
+
+<!-- ═══ AUTH PAGES ═══ -->
+<div id="authPage" class="page" hidden>
+  <div class="auth-page">
+    <div class="auth-card">
+      <div class="auth-logo">Prob<em>Q</em></div>
+      <div class="auth-sub">Amrutvahini College of Engineering</div>
+      <div class="auth-notice">📌 Sign in with your registered email.</div>
+      <div class="ff"><label class="fl">Email Address</label><input class="fi" id="siEmail" type="email" placeholder="your@email.com" autocomplete="email"></div>
+      <div class="ff"><label class="fl">Password</label>
+        <div class="pass-wrap">
+          <input class="fi" id="siPass" type="password" placeholder="Your password" autocomplete="current-password">
+          <button class="pass-eye" type="button" onclick="window._togglePass('siPass',this)">👁</button>
+        </div>
+      </div>
+      <button class="btn btn-amber btn-full" id="siBtn" onclick="window._signIn()">Sign In</button>
+      <div style="text-align:right;margin-top:.5rem">
+        <a onclick="page('forgot')" style="font-size:.8rem;color:var(--am);cursor:pointer;font-weight:600">Forgot password?</a>
+      </div>
+      <div class="auth-switch">New here? <a onclick="page('signup')">Create a free account &rarr;</a></div>
+    </div>
+  </div>
+</div>
+
+<div id="forgotPage" class="page" hidden>
+  <div class="auth-page">
+    <div class="auth-card">
+      <div class="auth-logo">Reset <em>Password</em></div>
+      <div class="auth-sub">Amrutvahini College of Engineering</div>
+      <div class="auth-notice">🔐 Enter your email — we'll send a reset link instantly.</div>
+      <div id="forgotSuccess" style="display:none;background:var(--gnb);border:1px solid rgba(46,125,82,.25);border-radius:8px;padding:.75rem .9rem;font-size:.85rem;color:var(--gn);margin-bottom:1rem">
+        ✅ Reset email sent! Check your inbox and spam folder.
+      </div>
+      <div class="ff"><label class="fl">Registered Email</label><input class="fi" id="forgotEmail" type="email" placeholder="your@email.com" autocomplete="email"></div>
+      <button class="btn btn-amber btn-full" id="forgotBtn" onclick="window._forgotPassword()">Send Reset Link</button>
+      <div class="auth-switch"><a onclick="page('auth')">&larr; Back to Sign In</a></div>
+    </div>
+  </div>
+</div>
+
+<div id="signupPage" class="page" hidden>
+  <div class="auth-page">
+    <div class="auth-card">
+      <div class="auth-logo">Join Prob<em>Q</em></div>
+      <div class="auth-sub">Amrutvahini College of Engineering</div>
+      <div class="auth-notice">⚠️ Open to all ACOE students. Select your year &amp; semester so we can personalise your feed.</div>
+      <div class="sec-lbl">Your Profile</div>
+      <div class="fg">
+        <div class="ff"><label class="fl">Full Name *</label><input class="fi" id="suName" type="text" placeholder="e.g. Rahul Sharma" autocomplete="name"></div>
+        <div class="ff"><label class="fl">Roll Number <span style="font-weight:400;color:var(--ink4)">(optional)</span></label><input class="fi" id="suRoll" type="text" placeholder="e.g. 251010XXXX"></div>
+      </div>
+      <div class="fg">
+        <div class="ff"><label class="fl">Year *</label>
+          <select class="fs" id="suYear"><option value="">— Select —</option><option>FY</option><option>SY</option><option>TY</option><option>BE</option></select></div>
+        <div class="ff"><label class="fl">Semester *</label>
+          <select class="fs" id="suSem"><option value="">— Select —</option>
+            <option value="1">Sem 1</option><option value="2">Sem 2</option><option value="3">Sem 3</option>
+            <option value="4">Sem 4</option><option value="5">Sem 5</option><option value="6">Sem 6</option>
+            <option value="7">Sem 7</option><option value="8">Sem 8</option>
+          </select></div>
+      </div>
+      <div class="ff"><label class="fl">Division <span style="font-weight:400;color:var(--ink4)">(e.g. K, K1, K2)</span></label><input class="fi" id="suDiv" type="text" placeholder="e.g. K1"></div>
+      <div class="sec-lbl">Login Credentials</div>
+      <div class="ff"><label class="fl">Email Address *</label><input class="fi" id="suEmail" type="email" placeholder="your@email.com" autocomplete="email"></div>
+      <div class="fg">
+        <div class="ff"><label class="fl">Password *</label>
+          <div class="pass-wrap">
+            <input class="fi" id="suPass" type="password" placeholder="Min 6 characters" autocomplete="new-password">
+            <button class="pass-eye" type="button" onclick="window._togglePass('suPass',this)">👁</button>
+          </div>
+        </div>
+        <div class="ff"><label class="fl">Confirm *</label>
+          <div class="pass-wrap">
+            <input class="fi" id="suPass2" type="password" placeholder="Repeat password" autocomplete="new-password">
+            <button class="pass-eye" type="button" onclick="window._togglePass('suPass2',this)">👁</button>
+          </div>
+        </div>
+      </div>
+      <button class="btn btn-amber btn-full" id="suBtn" onclick="window._signUp()" style="margin-top:.5rem">Create Account &rarr;</button>
+      <div class="auth-switch">Already a member? <a onclick="page('auth')">Sign in &rarr;</a></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ ADMIN ═══ -->
+<div id="adminPage" class="page" hidden>
+  <div class="layout-full">
+    <div class="sec-hd"><h2>⚙ Admin Panel</h2><hr><span style="font-size:.77rem;color:var(--ink3)">Super Admin &middot; Amrutvahini COE</span></div>
+    <div class="admin-stats">
+      <div class="a-stat"><div class="a-stat-n" id="aStatQ">0</div><div class="a-stat-l">Questions</div></div>
+      <div class="a-stat"><div class="a-stat-n" id="aStatP">0</div><div class="a-stat-l">Students</div></div>
+      <div class="a-stat"><div class="a-stat-n" id="aStatV">0</div><div class="a-stat-l">Verified</div></div>
+      <div class="a-stat"><div class="a-stat-n" id="aStatN">0</div><div class="a-stat-l">Notes</div></div>
+    </div>
+    <div class="admin-section">
+      <div class="admin-section-title">📅 Exam &amp; Announcement Settings</div>
+      <div class="fg">
+        <div class="ff"><label class="fl">Exam Date &amp; Time</label><input class="fi" type="datetime-local" id="adminExamDate"></div>
+        <div class="ff"><label class="fl">Label</label><input class="fi" id="adminExamLabel" placeholder="e.g. Endsem 2026"></div>
+      </div>
+      <div id="adminCurDate" style="font-size:.78rem;color:var(--ink3);margin-bottom:.75rem"></div>
+      <div class="ff"><label class="fl">Announcement Text</label><input class="fi" id="adminAnnText" placeholder="e.g. Focus on Unit 3 &amp; 4 this sem"></div>
+      <div class="ff"><label class="fchk"><input type="checkbox" id="adminAnnActive"> Show announcement to all students</label></div>
+      <button class="btn btn-amber" onclick="window._saveSettings()">Save Settings</button>
+    </div>
+    <div class="admin-section">
+      <div class="admin-section-title">📤 Export</div>
+      <div style="display:flex;gap:.75rem;flex-wrap:wrap">
+        <button class="btn btn-outline" onclick="window._exportCSV()">⬇ Export CSV</button>
+        <button class="btn btn-outline" onclick="page('pdf')">📄 PDF Export</button>
+      </div>
+    </div>
+    <div class="admin-section">
+      <div class="admin-section-title">🚩 Student Reports</div>
+      <div id="adminReports"><p class="empty-inline">Loading…</p></div>
+    </div>
+    <div class="sec-hd"><h2 style="font-size:1.1rem">Moderate Questions</h2><hr></div>
+    <div id="adminQList"><p class="empty-inline">Loading…</p></div>
+  </div>
+</div>
+
+<!-- ═══ POST MODAL ═══ -->
+<div class="modal-overlay" id="qModal">
+  <div class="modal-box">
+    <input type="hidden" id="modalEditId">
+    <div class="modal-hd">
+      <div><div class="modal-title">Post a Probable Question</div><div class="modal-sub">Help your classmates predict the next exam.</div></div>
+      <button class="mclose" onclick="closeModal()">&#10005;</button>
+    </div>
+    <div class="msec">&#9312; Classify</div>
+    <div class="fg">
+      <div class="ff"><label class="fl">Year *</label><select class="fs" id="qYear"><option value="">— Year —</option><option>FY</option><option>SY</option><option>TY</option><option>BE</option></select></div>
+      <div class="ff"><label class="fl">Branch *</label><select class="fs" id="qBranch"><option value="">— Branch —</option><option>Computer Engineering</option><option>Information Technology</option><option>Mechanical Engineering</option><option>Civil Engineering</option><option>Electrical Engineering</option><option>Electronics &amp; Telecom</option><option>AIDS</option><option>Chemical Engineering</option></select></div>
+    </div>
+    <div class="fg">
+      <div class="ff"><label class="fl">Subject</label><input class="fi" id="qSubject" placeholder="e.g. Applied Maths-II"></div>
+      <div class="ff"><label class="fl">Topic / Chapter</label><input class="fi" id="qTopic" placeholder="e.g. Laplace Transform"></div>
+    </div>
+    <div class="fg">
+      <div class="ff"><label class="fl">Exam Type</label><select class="fs" id="qExamType"><option>Endsem</option><option>Midsem</option><option>Unit Test</option><option>Practical / Oral</option><option>Previous Year Paper</option></select></div>
+      <div class="ff"><label class="fl">Difficulty</label><select class="fs" id="qDiff"><option value="">Not Set</option><option>Easy</option><option>Medium</option><option>Hard</option></select></div>
+    </div>
+    <div class="msec">&#9313; Question</div>
+    <div class="ff">
+      <label class="fl" style="display:flex;justify-content:space-between;align-items:center">Question Text * <span id="qTextCount" style="font-weight:400;color:var(--ink4);font-size:.72rem">0 / 500</span></label>
+      <textarea class="fta" id="qText" maxlength="500" placeholder="Type the probable question exactly as it may appear in the exam&hellip;" rows="4"></textarea>
+    </div>
+    <div class="ff">
+      <label class="fl">Image <span style="font-weight:400;color:var(--ink4)">(optional — diagram, circuit, equation)</span></label>
+      <div class="img-up">
+        <input type="file" id="qImage" accept="image/*" onchange="window._previewImage()">
+        <div class="img-up-lbl">📷 Tap to upload question image</div>
+        <img id="imgPrev" alt="Preview" style="display:none;width:100%;max-height:140px;object-fit:cover;border-radius:6px;margin-top:.5rem">
+      </div>
+    </div>
+    <div class="msec">&#9314; Answer <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--ink4)">(optional — AI will generate if left empty)</span></div>
+    <div class="ff"><label class="fl">Short Answer / Key Points</label><textarea class="fta" id="qAnswer" placeholder="Key points to help classmates revise. Leave blank for AI to generate automatically&hellip;" rows="3"></textarea></div>
+    <div class="msec">&#9315; Tags &amp; Options</div>
+    <div class="ff"><label class="fl">Tags (comma separated)</label><input class="fi" id="qTags" placeholder="e.g. integration, Fourier, OSI model, DBMS"></div>
+    <div class="ff"><label class="fchk"><input type="checkbox" id="qRepeat"> This appeared in a previous exam paper <span style="color:var(--am);font-weight:600">(+1 repeat)</span></label></div>
+    <div class="ff"><label class="fchk"><input type="checkbox" id="qAnon"> Post anonymously <span style="color:var(--ink3);font-size:.8rem">(your name won't be shown)</span></label></div>
+    <button class="btn btn-amber btn-full" id="modalSubmitBtn" onclick="window._submitQuestion()" style="margin-top:.75rem">Post Question</button>
+  </div>
+</div>
+
+<!-- ═══ COMMENTS MODAL ═══ -->
+<div class="modal-overlay" id="cmtModal">
+  <div class="modal-box cmt-box">
+    <input type="hidden" id="cmtQid">
+    <div class="modal-hd">
+      <div><div class="modal-title">&#128172; Discussion</div><div class="modal-sub">Ask, clarify or confirm with classmates.</div></div>
+      <button class="mclose" onclick="closeCmt()">&#10005;</button>
+    </div>
+    <div id="cmtList"></div>
+    <div class="cmt-inp-wrap">
+      <textarea id="cmtInput" placeholder="Write a comment&hellip; (Enter to post)" rows="1"></textarea>
+      <button id="cmtBtn" onclick="window._postCmt()">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ REPORT MODAL ═══ -->
+<div class="modal-overlay" id="reportModal">
+  <div class="modal-box" style="max-width:420px">
+    <input type="hidden" id="reportQid">
+    <div class="modal-hd">
+      <div><div class="modal-title">&#128681; Report Question</div><div class="modal-sub">Help keep the question bank accurate.</div></div>
+      <button class="mclose" onclick="closeReport()">&#10005;</button>
+    </div>
+    <div class="ff"><label class="fl">Reason *</label>
+      <select class="fs" id="reportReason">
+        <option value="">&mdash; Select reason &mdash;</option>
+        <option>Wrong answer / incorrect information</option>
+        <option>Duplicate of another question</option>
+        <option>Spam or irrelevant content</option>
+        <option>Out of syllabus</option>
+        <option>Offensive content</option>
+        <option>Other</option>
+      </select>
+    </div>
+    <button class="btn btn-amber btn-full" onclick="window._submitReport()">Submit Report</button>
+  </div>
+</div>
+
+<!-- ═══ NOTE UPLOAD MODAL ═══ -->
+<div class="modal-overlay" id="noteModal">
+  <div class="modal-box" style="max-width:500px">
+    <div class="modal-hd">
+      <div><div class="modal-title">📝 Upload Notes</div><div class="modal-sub">Share study material with your classmates.</div></div>
+      <button class="mclose" onclick="closeNoteModal()">&#10005;</button>
+    </div>
+    <div class="ff"><label class="fl">Title *</label><input class="fi" id="noteTitle" placeholder="e.g. Applied Maths Unit 3 Notes"></div>
+    <div class="fg">
+      <div class="ff"><label class="fl">Year *</label><select class="fs" id="noteYear"><option value="">— Year —</option><option>FY</option><option>SY</option><option>TY</option><option>BE</option></select></div>
+      <div class="ff"><label class="fl">Branch *</label><select class="fs" id="noteBranch"><option value="">— Branch —</option><option>Computer Engineering</option><option>Information Technology</option><option>Mechanical Engineering</option><option>Civil Engineering</option><option>Electrical Engineering</option><option>Electronics &amp; Telecom</option><option>AIDS</option></select></div>
+    </div>
+    <div class="fg">
+      <div class="ff"><label class="fl">Subject</label><input class="fi" id="noteSubject" placeholder="e.g. Applied Maths-II"></div>
+      <div class="ff"><label class="fl">Topic / Chapter</label><input class="fi" id="noteTopic" placeholder="e.g. Fourier Series"></div>
+    </div>
+    <div class="ff"><label class="fl">File (PDF, DOC, Image — max 10MB)</label><input class="fi" id="noteFile" type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" style="padding:.4rem"></div>
+    <button class="btn btn-amber btn-full" id="noteUploadBtn" onclick="window._uploadNote()">Upload Notes</button>
+  </div>
+</div>
+
+<!-- ═══ TIMETABLE UPLOAD MODAL ═══ -->
+<div class="modal-overlay" id="ttModal">
+  <div class="modal-box" style="max-width:500px">
+    <div class="modal-hd">
+      <div><div class="modal-title">📅 Upload Timetable</div><div class="modal-sub">Upload as image for AI to read the schedule automatically.</div></div>
+      <button class="mclose" onclick="closeTTModal()">&#10005;</button>
+    </div>
+    <div class="auth-notice">⚠️ Each division can only have one timetable. If one already exists, admin must approve an update. Upload as an <strong>image (JPG/PNG)</strong> for AI reading.</div>
+    <div class="fg">
+      <div class="ff"><label class="fl">Year *</label><select class="fs" id="ttYear"><option value="">— Year —</option><option>FY</option><option>SY</option><option>TY</option><option>BE</option></select></div>
+      <div class="ff"><label class="fl">Branch *</label><select class="fs" id="ttBranch"><option value="">— Branch —</option><option>Computer Engineering</option><option>Information Technology</option><option>Mechanical Engineering</option><option>Civil Engineering</option><option>Electrical Engineering</option><option>Electronics &amp; Telecom</option><option>AIDS</option></select></div>
+    </div>
+    <div class="fg">
+      <div class="ff"><label class="fl">Division * (e.g. K, K1, K2)</label><input class="fi" id="ttDiv" placeholder="e.g. K1"></div>
+      <div class="ff"><label class="fl">Semester *</label><select class="fs" id="ttSem"><option value="">—</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option></select></div>
+    </div>
+    <div class="ff"><label class="fl">Timetable File * (Image preferred for AI reading)</label><input class="fi" id="ttFile" type="file" accept=".jpg,.jpeg,.png,.pdf" style="padding:.4rem"></div>
+    <button class="btn btn-amber btn-full" id="ttUploadBtn" onclick="window._uploadTimetable()">Upload Timetable</button>
+  </div>
+</div>
+
+<!-- MOBILE BOTTOM NAV -->
+<nav class="mob-nav" id="mobNav">
+  <button class="mob-nav-item active" id="mobnav_home" onclick="page('home');setMobNav('home')">
+    <span class="mob-nav-icon">🎯</span><span class="mob-nav-label">Questions</span>
+  </button>
+  <button class="mob-nav-item" id="mobnav_notes" onclick="page('notes');setMobNav('notes')">
+    <span class="mob-nav-icon">📝</span><span class="mob-nav-label">Notes</span>
+  </button>
+  <button class="mob-nav-item mob-nav-post" onclick="openModal()">
+    <span class="mob-nav-icon mob-nav-plus">＋</span><span class="mob-nav-label">Post</span>
+  </button>
+  <button class="mob-nav-item" id="mobnav_revision" onclick="page('revision');setMobNav('revision')">
+    <span class="mob-nav-icon">🃏</span><span class="mob-nav-label">Revise</span>
+  </button>
+  <button class="mob-nav-item" id="mobnav_profile" onclick="page('profile');setMobNav('profile')">
+    <span class="mob-nav-icon">👤</span><span class="mob-nav-label">Profile</span>
+  </button>
+</nav>
+
+<!-- FAB (desktop only) -->
+<button class="fab" id="fab" onclick="openModal()"><span style="font-size:1rem">&#65291;</span> Post Question</button>
+
+<!-- TOASTS -->
+<div id="toastBox"></div>
+
+<!--
+UPDATED FIRESTORE RULES — paste in Firebase Console → Firestore → Rules:
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /questions/{id} {
+      allow read: if true;
+      allow create, update: if request.auth != null;
+      allow delete: if request.auth.token.email == "amrutvahini4@gmail.com";
+    }
+    match /questions/{qid}/comments/{cid} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow delete: if request.auth.token.email == "amrutvahini4@gmail.com";
+    }
+    match /notes/{id} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow delete: if request.auth.token.email == "amrutvahini4@gmail.com";
+    }
+    match /timetables/{id} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow update: if request.auth.token.email == "amrutvahini4@gmail.com";
+      allow delete: if request.auth.token.email == "amrutvahini4@gmail.com";
+    }
+    match /settings/{doc} {
+      allow read: if true;
+      allow write: if request.auth.token.email == "amrutvahini4@gmail.com";
+    }
+    match /users/{uid} {
+      allow read: if request.auth != null;
+      allow write: if request.auth.uid == uid;
+    }
+    match /reports/{rid} {
+      allow create: if request.auth != null;
+      allow read, delete: if request.auth.token.email == "amrutvahini4@gmail.com";
+    }
+  }
+}
+-->
+
+</body>
+</html>
