@@ -25,6 +25,7 @@ import { getFirestore, collection, doc, addDoc, setDoc, getDoc, getDocs,
   increment, serverTimestamp, arrayUnion, arrayRemove
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { getStorage } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
+import { getMessaging, getToken, onMessage } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
 
 /* ═══════════════════════════════════
    FIREBASE CONFIG
@@ -61,6 +62,9 @@ const app     = initializeApp(firebaseConfig);
 const auth    = getAuth(app);
 const db      = getFirestore(app);
 const storage = getStorage(app); // kept for compatibility
+let messaging = null;
+try { messaging = getMessaging(app); } catch(e) { console.log('Messaging not supported'); }
+const VAPID_KEY = 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SvmmaI7jMjPSTSMvJKvFkQ6lC1WQ6zYjBdMsW8mAkmB3dHJbVmMWiA';
 
 /* ═══════════════════════════════════
    STATE
@@ -124,6 +128,8 @@ function syncNavUI(){
   $('navAdmin').style.display=isAdmin?'block':'none';
   $('navBm').style.display=u?'block':'none';
   $('navProfile').style.display=u?'block':'none';
+  $('nav_study').style.display=u?'block':'none';
+  $('nav_groups').style.display=u?'block':'none';
 }
 
 /* Password toggle helper */
@@ -218,7 +224,7 @@ async function loadUserProfile(){
 let currentPage='home';
 window.page=function(p){
   if(p==='admin'&&!isAdmin){toast('Admin access restricted','warn');return;}
-  if(['bookmarks','profile','revision','analytics','notes','timetable'].includes(p)&&!currentUser){page('auth');return;}
+  if(['bookmarks','profile','revision','analytics','notes','timetable','study','groups'].includes(p)&&!currentUser){page('auth');return;}
   currentPage=p;
   document.querySelectorAll('.page').forEach(el=>el.hidden=true);
   const t=$(p+'Page');if(t)t.hidden=false;
@@ -227,6 +233,9 @@ window.page=function(p){
   window.scrollTo(0,0);
   closeModal();closeCmt();closeReport();
   if(p==='admin')renderAdminPage();
+  if(p==='study')renderStudyDash();
+  if(p==='predictor')renderPredictor();
+  if(p==='groups')renderGroups();
   if(p==='bookmarks')renderBookmarks();
   if(p==='profile')renderProfile();
   if(p==='revision')startRevision();
@@ -238,6 +247,259 @@ window.page=function(p){
 /* ═══════════════════════════════════
    REALTIME LISTENERS
 ═══════════════════════════════════ */
+/* ═══════════════════════════════════
+   NOTIFICATION SYSTEM
+═══════════════════════════════════ */
+const NOTIF_KEY = 'pq_notifs';
+let notifList = JSON.parse(localStorage.getItem(NOTIF_KEY)||'[]');
+let notifEnabled = localStorage.getItem('pq_notif_on')==='true';
+let lectureTimer = null;
+
+// Save notification to local list
+function pushNotif(icon, title, body, action){
+  const n = {id:Date.now(), icon, title, body, action, read:false, ts:Date.now()};
+  notifList.unshift(n);
+  if(notifList.length>50) notifList=notifList.slice(0,50);
+  localStorage.setItem(NOTIF_KEY, JSON.stringify(notifList));
+  updateNotifBadge();
+  showInAppNotif(icon, title, body, action);
+}
+
+// In-app toast-style notification (always shows)
+function showInAppNotif(icon, title, body, action){
+  const box = document.getElementById('notifToastBox');
+  if(!box) return;
+  const el = document.createElement('div');
+  el.className = 'notif-toast';
+  el.innerHTML = `<div class="notif-toast-icon">${icon}</div>
+    <div class="notif-toast-content">
+      <div class="notif-toast-title">${title}</div>
+      <div class="notif-toast-body">${body}</div>
+    </div>
+    <button class="notif-toast-close" onclick="this.parentElement.remove()">✕</button>`;
+  if(action) el.style.cursor='pointer', el.onclick = (e)=>{ if(!e.target.classList.contains('notif-toast-close')){ action(); el.remove(); } };
+  box.appendChild(el);
+  setTimeout(()=>el.classList.add('notif-toast-show'),50);
+  setTimeout(()=>{ el.classList.remove('notif-toast-show'); setTimeout(()=>el.remove(),400); },6000);
+}
+
+// Browser push notification
+function sendPushNotif(title, body, icon='📚'){
+  if(!notifEnabled || Notification.permission !== 'granted') return;
+  try {
+    new Notification(title, { body, icon: '/favicon.ico', badge: '/favicon.ico', tag: title });
+  } catch(e){}
+}
+
+// Update bell badge count
+function updateNotifBadge(){
+  const unread = notifList.filter(n=>!n.read).length;
+  const badge = document.getElementById('notifBadge');
+  if(badge){ badge.textContent=unread; badge.style.display=unread>0?'flex':'none'; }
+}
+
+// Request notification permission
+async function requestNotifPermission(){
+  if(!('Notification' in window)) return false;
+  if(Notification.permission==='granted'){ notifEnabled=true; localStorage.setItem('pq_notif_on','true'); return true; }
+  if(Notification.permission==='denied'){ toast('Notifications blocked — enable in browser settings','warn'); return false; }
+  const perm = await Notification.requestPermission();
+  if(perm==='granted'){
+    notifEnabled=true;
+    localStorage.setItem('pq_notif_on','true');
+    toast('🔔 Notifications enabled!','success');
+    pushNotif('🎓','Welcome to ProbQ Notifications!','You will get lecture reminders, new questions & announcements.', null);
+    return true;
+  }
+  return false;
+}
+
+// Toggle notifications on/off
+window._toggleNotif = async function(){
+  if(!notifEnabled){
+    await requestNotifPermission();
+  } else {
+    notifEnabled=false;
+    localStorage.setItem('pq_notif_on','false');
+    toast('🔕 Notifications disabled','info');
+  }
+  renderNotifPanel();
+};
+
+// Open/close notification panel
+window._openNotifPanel = function(){
+  const panel = document.getElementById('notifPanel');
+  if(!panel) return;
+  // Mark all as read
+  notifList.forEach(n=>n.read=true);
+  localStorage.setItem(NOTIF_KEY, JSON.stringify(notifList));
+  updateNotifBadge();
+  renderNotifPanel();
+  panel.classList.add('open');
+  document.getElementById('notifOverlay')?.classList.add('open');
+};
+window._closeNotifPanel = function(){
+  document.getElementById('notifPanel')?.classList.remove('open');
+  document.getElementById('notifOverlay')?.classList.remove('open');
+};
+
+function renderNotifPanel(){
+  const list = document.getElementById('notifPanelList');
+  const toggle = document.getElementById('notifToggleBtn');
+  if(toggle) toggle.textContent = notifEnabled ? '🔔 On — Click to disable' : '🔕 Off — Click to enable';
+  if(!list) return;
+  if(!notifList.length){
+    list.innerHTML='<div class="notif-empty">No notifications yet.<br>Enable notifications to get lecture reminders & updates!</div>';
+    return;
+  }
+  list.innerHTML = notifList.map(n=>`
+    <div class="notif-item${n.read?'':' notif-unread'}">
+      <div class="notif-item-icon">${n.icon}</div>
+      <div class="notif-item-content">
+        <div class="notif-item-title">${n.title}</div>
+        <div class="notif-item-body">${n.body}</div>
+        <div class="notif-item-ts">${timeAgo({toMillis:()=>n.ts})}</div>
+      </div>
+    </div>`).join('');
+}
+
+window._clearNotifs = function(){
+  notifList=[];
+  localStorage.setItem(NOTIF_KEY,'[]');
+  updateNotifBadge();
+  renderNotifPanel();
+};
+
+/* ── LECTURE REMINDERS ───────────────────────────────────────── */
+function scheduleLectureReminders(){
+  if(lectureTimer) clearInterval(lectureTimer);
+  lectureTimer = setInterval(checkUpcomingLectures, 60000); // check every minute
+  checkUpcomingLectures(); // also check immediately
+}
+
+function checkUpcomingLectures(){
+  if(!notifEnabled || !allTimetables.length || !userProfile.year) return;
+  const now = new Date();
+  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const todayName = days[now.getDay()];
+  const nowMins = now.getHours()*60 + now.getMinutes();
+
+  // Find timetable matching user's profile
+  const tt = allTimetables.find(t=>
+    t.year===userProfile.year &&
+    (!userProfile.division || t.division===userProfile.division)
+  );
+  if(!tt || !tt.aiScheduleJson) return;
+
+  let sched;
+  try{ sched = typeof tt.aiScheduleJson==='string' ? JSON.parse(tt.aiScheduleJson) : tt.aiScheduleJson; }catch(e){ return; }
+
+  const todaySchedule = sched.days?.find(d=>d.day.toLowerCase().startsWith(todayName.toLowerCase().slice(0,3)));
+  if(!todaySchedule) return;
+
+  todaySchedule.periods?.forEach(period=>{
+    if(!period.subject || period.subject==='—' || period.subject==='Break' || period.subject==='Lunch') return;
+    // Parse start time
+    const startStr = period.time?.split('-')[0]?.trim();
+    if(!startStr) return;
+    const [h,m] = startStr.split(':').map(Number);
+    if(isNaN(h)||isNaN(m)) return;
+    const startMins = h*60+m;
+    const diff = startMins - nowMins;
+
+    // Notify at 15 mins before and 5 mins before
+    const notifKey15 = `lec_15_${todayName}_${period.time}`;
+    const notifKey5  = `lec_5_${todayName}_${period.time}`;
+    const todayDate  = now.toDateString();
+
+    if(diff > 0 && diff <= 15 && diff > 5){
+      const storageKey = notifKey15 + '_' + todayDate;
+      if(!localStorage.getItem(storageKey)){
+        localStorage.setItem(storageKey,'1');
+        pushNotif('📅', `${period.subject} in 15 minutes`, `Starts at ${period.time} • ${tt.year} ${tt.branch} Div ${tt.division}`, ()=>page('timetable'));
+        sendPushNotif(`📅 ${period.subject} in 15 mins`, `Starts at ${period.time}`);
+      }
+    }
+    if(diff > 0 && diff <= 5){
+      const storageKey = notifKey5 + '_' + todayDate;
+      if(!localStorage.getItem(storageKey)){
+        localStorage.setItem(storageKey,'1');
+        pushNotif('🔔', `${period.subject} starting NOW!`, `${period.time} • Room: ${period.room||tt.division} — Don\'t be late!`, ()=>page('timetable'));
+        sendPushNotif(`🔔 ${period.subject} NOW!`, `${period.time} — Don't be late!`);
+      }
+    }
+  });
+}
+
+/* ── CONTENT NOTIFICATIONS ───────────────────────────────────── */
+let prevQCount = -1, prevNoteCount = -1;
+
+function checkNewQuestions(questions){
+  if(prevQCount === -1){ prevQCount = questions.length; return; }
+  const newQs = questions.length - prevQCount;
+  if(newQs > 0){
+    const newest = questions[0];
+    const msg = newQs===1
+      ? `"${(newest.text||'').substring(0,60)}…"`
+      : `${newQs} new questions added`;
+    pushNotif('🔥', 'New Question Posted', msg, ()=>page('home'));
+    sendPushNotif('🔥 New Question', msg);
+  }
+  prevQCount = questions.length;
+}
+
+function checkNewNotes(notes){
+  if(prevNoteCount === -1){ prevNoteCount = notes.length; return; }
+  const newN = notes.length - prevNoteCount;
+  if(newN > 0){
+    const newest = notes[0];
+    pushNotif('📝', 'New Notes Uploaded', `${newest.title||'New notes'} • ${newest.subject||newest.year||''}`, ()=>page('notes'));
+    sendPushNotif('📝 New Notes', newest.title||'New study material uploaded');
+  }
+  prevNoteCount = notes.length;
+}
+
+function checkAnnouncement(text, active){
+  if(!active || !text) return;
+  const key = 'pq_ann_'+btoa(text.slice(0,20));
+  if(localStorage.getItem(key)) return;
+  localStorage.setItem(key,'1');
+  pushNotif('📢', 'Admin Announcement', text.substring(0,100), null);
+  sendPushNotif('📢 Announcement', text.substring(0,100));
+}
+
+/* ── DAILY QOTD NOTIFICATION ─────────────────────────────────── */
+function checkQOTDNotif(){
+  if(!notifEnabled) return;
+  const today = new Date().toDateString();
+  const key = 'pq_qotd_'+today;
+  if(localStorage.getItem(key)) return;
+  if(!qotdQ) return;
+  localStorage.setItem(key,'1');
+  setTimeout(()=>{
+    pushNotif('⭐','Question of the Day Ready!',
+      `"${(qotdQ.text||'').substring(0,80)}…" — ${qotdQ.repeatCount} repeats`,
+      ()=>page('home'));
+    sendPushNotif('⭐ Question of the Day', (qotdQ.text||'').substring(0,80));
+  }, 3000);
+}
+
+/* ── EXAM COUNTDOWN NOTIF ────────────────────────────────────── */
+function checkExamCountdownNotif(){
+  if(!notifEnabled) return;
+  const diff = EXAM_DATE - new Date();
+  const days = Math.floor(diff/86400000);
+  const alertDays = [30,20,15,10,7,5,3,2,1];
+  if(!alertDays.includes(days)) return;
+  const key = 'pq_exam_'+days;
+  if(localStorage.getItem(key)) return;
+  localStorage.setItem(key,'1');
+  pushNotif('⏳',`${days} Days to Endsem!`,
+    `Only ${days} days left. Check trending questions & revise flashcards!`,
+    ()=>page('revision'));
+  sendPushNotif(`⏳ ${days} Days to Exam!`, 'Check trending questions & revise now!');
+}
+
 function bootListeners(){
   // Offline cache
   try{const cached=localStorage.getItem('pq_cache');if(cached){allQuestions=JSON.parse(cached);renderFeed();refreshSidebar();renderHistory();updateQOTD();}}catch(e){}
@@ -246,7 +508,7 @@ function bootListeners(){
   onSnapshot(query(collection(db,'questions'),orderBy('repeatCount','desc')),snap=>{
     allQuestions=snap.docs.map(d=>({id:d.id,...d.data()}));
     try{localStorage.setItem('pq_cache',JSON.stringify(allQuestions.map(q=>({id:q.id,text:q.text,year:q.year,branch:q.branch,subject:q.subject,topic:q.topic,examType:q.examType,answer:q.answer,tags:q.tags,repeatCount:q.repeatCount,upvotes:q.upvotes||[],commentCount:q.commentCount||0,verified:q.verified,anonymous:q.anonymous,postedBy:q.postedBy,difficulty:q.difficulty,aiAnswer:q.aiAnswer,aiChecked:q.aiChecked}))));}catch(e){}
-    renderFeed();refreshChart();refreshSidebar();updateQOTD();renderHistory();
+    checkNewQuestions(allQuestions);renderFeed();refreshChart();refreshSidebar();updateQOTD();checkQOTDNotif();renderHistory();
     if(currentPage==='admin')renderAdminPage();
     if(currentPage==='bookmarks')renderBookmarks();
     if(currentPage==='analytics')renderAnalytics();
@@ -255,6 +517,7 @@ function bootListeners(){
   // Notes
   onSnapshot(query(collection(db,'notes'),orderBy('createdAt','desc')),snap=>{
     allNotes=snap.docs.map(d=>({id:d.id,...d.data()}));
+    checkNewNotes(allNotes);
     if(currentPage==='notes')renderNotes();
   });
 
@@ -262,6 +525,7 @@ function bootListeners(){
   onSnapshot(collection(db,'timetables'),snap=>{
     allTimetables=snap.docs.map(d=>({id:d.id,...d.data()}));
     if(currentPage==='timetable')renderTimetable();
+    scheduleLectureReminders();
   });
 
   // Settings
@@ -275,6 +539,7 @@ function bootListeners(){
     if(d.examLabel){const l=$('cdLabel');if(l)l.textContent=d.examLabel+':';}
     pinnedIds=d.pinned||[];
     renderAnnouncement(d.announcement||'',d.announcementActive||false);
+    checkAnnouncement(d.announcement||'',d.announcementActive||false);
     if(isAdmin)prefillAdminSettings(d);
   });
 }
@@ -1052,7 +1317,11 @@ function showFlash(){
     :'<div style="color:var(--ink3);font-size:.85rem;margin-top:1rem">No answer yet. <button class="ai-gen-btn" onclick="window._generateAIAnswer(\''+q.id+'\')">🤖 Generate AI Answer</button></div>'}`;
 }
 window._revealFlash=function(){const a=$('flashAns'),b=$('flashRevealBtn');if(a)a.style.display='block';if(b)b.style.display='none';};
-window._nextFlash=function(){if(flashIdx<flashCards.length-1){flashIdx++;showFlash();}else toast('🎉 All cards reviewed!','success');};
+window._nextFlash=function(){
+  // Log study activity for current card
+  if(flashCards[flashIdx]) logStudyActivity(flashCards[flashIdx].subject||flashCards[flashIdx].topic, true);
+  if(flashIdx<flashCards.length-1){flashIdx++;showFlash();}else toast('🎉 All cards reviewed!','success');
+};
 window._prevFlash=function(){if(flashIdx>0){flashIdx--;showFlash();}};
 window._shuffleFlash=function(){flashCards.sort(()=>Math.random()-0.5);flashIdx=0;showFlash();toast('Shuffled! 🔀','info');};
 
@@ -1304,6 +1573,330 @@ function toast(msg,type){
 window._togglePass=function(inputId,btn){const inp=$(inputId);if(inp.type==='password'){inp.type='text';btn.textContent='🙈';}else{inp.type='password';btn.textContent='👁';}};
 
 /* ═══════════════════════════════════
+   STUDY DASHBOARD
+═══════════════════════════════════ */
+let studyLog = JSON.parse(localStorage.getItem('pq_study_log')||'{}');
+// studyLog = { subjectKey: { reviewed: N, lastSeen: ts, correct: N, total: N } }
+
+function logStudyActivity(subject, correct){
+  if(!subject||subject==='—') return;
+  const key = subject.trim().toLowerCase();
+  if(!studyLog[key]) studyLog[key]={reviewed:0,correct:0,total:0,lastSeen:0,subject};
+  studyLog[key].reviewed++;
+  studyLog[key].total++;
+  if(correct) studyLog[key].correct++;
+  studyLog[key].lastSeen = Date.now();
+  localStorage.setItem('pq_study_log', JSON.stringify(studyLog));
+}
+
+function renderStudyDash(){
+  const el = document.getElementById('studyDashContent');
+  if(!el) return;
+  const entries = Object.values(studyLog).sort((a,b)=>b.lastSeen-a.lastSeen);
+  const totalReviewed = entries.reduce((s,e)=>s+e.reviewed,0);
+  const totalSubjects = entries.length;
+  const streak = getStudyStreak();
+  // Subjects needing review (not seen in 2+ days)
+  const needReview = entries.filter(e=>Date.now()-e.lastSeen > 2*86400000);
+  // Strong subjects (reviewed 5+ times)
+  const strong = entries.filter(e=>e.reviewed>=5);
+
+  el.innerHTML = `
+  <div class="sd-stats-row">
+    <div class="sd-stat"><div class="sd-stat-num">${streak}</div><div class="sd-stat-lbl">🔥 Day Streak</div></div>
+    <div class="sd-stat"><div class="sd-stat-num">${totalReviewed}</div><div class="sd-stat-lbl">📖 Total Reviews</div></div>
+    <div class="sd-stat"><div class="sd-stat-num">${totalSubjects}</div><div class="sd-stat-lbl">📚 Subjects Tracked</div></div>
+    <div class="sd-stat"><div class="sd-stat-num">${needReview.length}</div><div class="sd-stat-lbl">⚠️ Need Review</div></div>
+  </div>
+
+  ${needReview.length ? `<div class="sd-section">
+    <div class="sd-section-title">⚠️ Due for Review</div>
+    <div class="sd-chips">${needReview.map(e=>`<button class="sd-chip sd-chip-warn" onclick="window._filter({search:'${e.subject.replace(/'/g,"\'")}'})">${e.subject}</button>`).join('')}</div>
+  </div>` : ''}
+
+  ${strong.length ? `<div class="sd-section">
+    <div class="sd-section-title">💪 Strong Topics</div>
+    <div class="sd-chips">${strong.map(e=>`<span class="sd-chip sd-chip-ok">${e.subject} ✓</span>`).join('')}</div>
+  </div>` : ''}
+
+  <div class="sd-section">
+    <div class="sd-section-title">📊 All Tracked Subjects</div>
+    ${entries.length===0 ? '<div class="sd-empty">No activity yet — start revising flashcards or questions to track progress!</div>'
+    : `<div class="sd-subject-list">${entries.map(e=>{
+      const pct = e.total>0 ? Math.round((e.correct/e.total)*100) : 0;
+      const barW = Math.min(100, e.reviewed*10);
+      return `<div class="sd-subject-row">
+        <div class="sd-subject-name">${e.subject}</div>
+        <div class="sd-subject-bar-wrap"><div class="sd-subject-bar" style="width:${barW}%"></div></div>
+        <div class="sd-subject-meta">${e.reviewed} reviews · ${timeAgo({toMillis:()=>e.lastSeen})}</div>
+      </div>`;
+    }).join('')}</div>`}
+  </div>
+
+  <div class="sd-section">
+    <div class="sd-section-title">📅 Today's Plan</div>
+    ${renderTodayPlan()}
+  </div>
+
+  <button class="btn btn-amber" onclick="if(confirm('Reset all study data?')){studyLog={};localStorage.removeItem('pq_study_log');renderStudyDash();}" style="margin-top:1rem;font-size:.75rem;padding:.4rem 1rem">Reset Study Data</button>`;
+}
+
+function getStudyStreak(){
+  const key = 'pq_streak';
+  const data = JSON.parse(localStorage.getItem(key)||'{"streak":0,"lastDate":""}');
+  const today = new Date().toDateString();
+  const yesterday = new Date(Date.now()-86400000).toDateString();
+  if(data.lastDate===today) return data.streak;
+  if(data.lastDate===yesterday){ data.streak++; data.lastDate=today; }
+  else if(data.lastDate!==today){ data.streak=1; data.lastDate=today; }
+  localStorage.setItem(key,JSON.stringify(data));
+  return data.streak;
+}
+
+function renderTodayPlan(){
+  if(!allTimetables.length||!userProfile.year) return '<div class="sd-empty">Set your year/division in Profile to see today's schedule.</div>';
+  const tt = allTimetables.find(t=>t.year===userProfile.year&&(!userProfile.division||t.division===userProfile.division));
+  if(!tt||!tt.aiScheduleJson) return '<div class="sd-empty">No timetable found for your division.</div>';
+  let sched; try{sched=typeof tt.aiScheduleJson==='string'?JSON.parse(tt.aiScheduleJson):tt.aiScheduleJson;}catch(e){return '';}
+  const days=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const today=days[new Date().getDay()];
+  const todayRow=sched.days?.find(d=>d.day.toLowerCase().startsWith(today.toLowerCase().slice(0,3)));
+  if(!todayRow) return `<div class="sd-empty">No classes today (${today}) 🎉</div>`;
+  const periods=todayRow.periods?.filter(p=>p.subject&&p.subject!=='—'&&p.subject!=='Break'&&p.subject!=='Lunch')||[];
+  if(!periods.length) return '<div class="sd-empty">No classes today 🎉</div>';
+  return `<div class="sd-today-list">${periods.map(p=>{
+    const now=new Date();
+    const nowM=now.getHours()*60+now.getMinutes();
+    const [h,m]=(p.time?.split('-')[0]||'').split(':').map(Number);
+    const startM=h*60+m;
+    const done=nowM>startM+55;
+    const now2=nowM>=startM&&nowM<=startM+55;
+    return `<div class="sd-today-row${done?' sd-done':now2?' sd-now':''}">
+      <span class="sd-today-time">${p.time}</span>
+      <span class="sd-today-sub">${p.subject}</span>
+      ${done?'<span class="sd-today-badge sd-badge-done">Done</span>':now2?'<span class="sd-today-badge sd-badge-now">Now</span>':'<span class="sd-today-badge sd-badge-up">Upcoming</span>'}
+    </div>`;
+  }).join('')}</div>`;
+}
+
+/* ═══════════════════════════════════
+   EXAM PREDICTOR
+═══════════════════════════════════ */
+function renderPredictor(){
+  const el = document.getElementById('predictorContent');
+  if(!el) return;
+  if(!allQuestions.length){el.innerHTML='<div class="empty-state"><span>🎯</span><p>Loading questions…</p></div>';return;}
+
+  // Filter to user's year if set
+  let qs = [...allQuestions];
+  if(userProfile.year) qs=qs.filter(q=>q.year===userProfile.year);
+
+  // Score each question: repeatCount*10 + upvotes*3 + comments*2 + recency bonus
+  const now=Date.now();
+  const scored = qs.map(q=>{
+    const age=q.createdAt?.toMillis?now-q.createdAt.toMillis():999999999;
+    const recency=age<7*86400000?15:age<30*86400000?8:age<90*86400000?3:0;
+    const score=(q.repeatCount||0)*10+(q.upvotes?.length||0)*3+(q.commentCount||0)*2+recency+(q.verified?5:0);
+    return {...q,_score:score};
+  }).sort((a,b)=>b._score-a._score);
+
+  // Group by subject
+  const bySubject={};
+  scored.forEach(q=>{
+    const sub=q.subject||'General';
+    if(!bySubject[sub]) bySubject[sub]=[];
+    if(bySubject[sub].length<5) bySubject[sub].push(q);
+  });
+
+  const top10=scored.slice(0,10);
+  const safe=(t='')=>t.replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  el.innerHTML=`
+  <div class="pred-hero">
+    <div class="pred-hero-title">🎯 Exam Predictor</div>
+    <div class="pred-hero-sub">AI-ranked questions most likely to appear in your exam — based on repeat count, upvotes, recency & verified status</div>
+  </div>
+
+  <div class="pred-section">
+    <div class="pred-section-title">🔥 Top 10 Most Probable Questions${userProfile.year?' for '+userProfile.year:''}</div>
+    <div class="pred-list">
+      ${top10.map((q,i)=>{
+        const prob=Math.min(99,Math.round((q._score/Math.max(scored[0]._score,1))*99));
+        const probCls=prob>=70?'pred-prob-high':prob>=40?'pred-prob-mid':'pred-prob-low';
+        return `<div class="pred-card">
+          <div class="pred-rank">#${i+1}</div>
+          <div class="pred-card-body">
+            <div class="pred-chips">
+              ${q.year?`<span class="chip chip-yr">${q.year}</span>`:''}
+              ${q.branch?`<span class="chip chip-br">${q.branch}</span>`:''}
+              ${q.subject?`<span class="chip chip-ex">${safe(q.subject)}</span>`:''}
+              ${q.verified?'<span class="chip chip-vf">✅ Verified</span>':''}
+            </div>
+            <div class="pred-qtext">${safe((q.text||'').substring(0,150))}${q.text?.length>150?'…':''}</div>
+            <div class="pred-meta">🔁 ${q.repeatCount} repeats · 👍 ${q.upvotes?.length||0} · 💬 ${q.commentCount||0}</div>
+          </div>
+          <div class="pred-prob-wrap">
+            <div class="pred-prob ${probCls}">${prob}%</div>
+            <div class="pred-prob-lbl">probable</div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>
+
+  <div class="pred-section">
+    <div class="pred-section-title">📚 Top Question by Subject</div>
+    <div class="pred-subject-grid">
+      ${Object.entries(bySubject).slice(0,12).map(([sub,qs2])=>`
+        <div class="pred-sub-card">
+          <div class="pred-sub-title">${safe(sub)}</div>
+          ${qs2.slice(0,3).map((q,i)=>`<div class="pred-sub-q">
+            <span class="pred-sub-rank">${i+1}</span>
+            <span>${safe((q.text||'').substring(0,80))}${q.text?.length>80?'…':''}</span>
+            <span class="pred-sub-rep">🔁${q.repeatCount}</span>
+          </div>`).join('')}
+        </div>`).join('')}
+    </div>
+  </div>`;
+}
+
+/* ═══════════════════════════════════
+   STUDY GROUPS
+═══════════════════════════════════ */
+let currentGroupId = null;
+let groupMessages = [];
+let groupUnsubscribe = null;
+
+function renderGroups(){
+  const el=document.getElementById('groupsContent');
+  if(!el)return;
+  if(!currentUser){el.innerHTML='<div class="empty-state"><span>👥</span><p>Sign in to join study groups.</p></div>';return;}
+
+  getDocs(collection(db,'studyGroups')).then(snap=>{
+    const groups=snap.docs.map(d=>({id:d.id,...d.data()}));
+    const myGroups=groups.filter(g=>g.members?.includes(currentUser.uid));
+    const otherGroups=groups.filter(g=>!g.members?.includes(currentUser.uid));
+
+    el.innerHTML=`
+    <div class="grp-layout">
+      <div class="grp-sidebar">
+        <button class="btn btn-amber btn-full" onclick="window._createGroup()" style="margin-bottom:1rem">+ Create Group</button>
+        ${myGroups.length?`<div class="grp-section-title">My Groups</div>
+        ${myGroups.map(g=>`<div class="grp-item${currentGroupId===g.id?' grp-item-active':''}" onclick="window._openGroup('${g.id}')">
+          <div class="grp-item-icon">${g.icon||'📚'}</div>
+          <div class="grp-item-info"><div class="grp-item-name">${g.name}</div><div class="grp-item-meta">${g.members?.length||0} members</div></div>
+        </div>`).join('')}`:''}
+        ${otherGroups.length?`<div class="grp-section-title" style="margin-top:.75rem">Discover Groups</div>
+        ${otherGroups.slice(0,10).map(g=>`<div class="grp-item" onclick="window._joinGroup('${g.id}','${g.name}')">
+          <div class="grp-item-icon">${g.icon||'📚'}</div>
+          <div class="grp-item-info"><div class="grp-item-name">${g.name}</div><div class="grp-item-meta">${g.members?.length||0} members · Tap to join</div></div>
+        </div>`).join('')}`:''}
+        ${!groups.length?'<div class="grp-empty">No groups yet. Create the first one!</div>':''}
+      </div>
+      <div class="grp-chat" id="grpChat">
+        <div class="grp-chat-empty">👈 Select a group to start chatting</div>
+      </div>
+    </div>`;
+  }).catch(e=>{ el.innerHTML=`<div class="empty-state"><span>❌</span><p>Could not load groups. Check Firestore rules.</p></div>`; });
+}
+
+window._createGroup=async function(){
+  const name=prompt('Group name (e.g. FY-K Sem2 Study):');
+  if(!name?.trim())return;
+  const icon=prompt('Pick an emoji icon:','📚')||'📚';
+  const year=prompt('Year (FY/SY/TY/BE):',userProfile.year||'')||'';
+  try{
+    await addDoc(collection(db,'studyGroups'),{
+      name:name.trim(),icon,year,
+      createdBy:currentUser.uid,
+      createdByName:currentUser.displayName||currentUser.email.split('@')[0],
+      members:[currentUser.uid],
+      createdAt:serverTimestamp()
+    });
+    toast('Group created! 🎉','success');
+    renderGroups();
+  }catch(e){toast('Error: '+e.message,'error');}
+};
+
+window._joinGroup=async function(gid,gname){
+  if(!confirm('Join "'+gname+'"?'))return;
+  try{
+    await updateDoc(doc(db,'studyGroups',gid),{members:arrayUnion(currentUser.uid)});
+    toast('Joined '+gname+'! 👥','success');
+    renderGroups();
+    window._openGroup(gid);
+  }catch(e){toast('Error: '+e.message,'error');}
+};
+
+window._openGroup=function(gid){
+  currentGroupId=gid;
+  if(groupUnsubscribe) groupUnsubscribe();
+  const chat=document.getElementById('grpChat');
+  if(!chat)return;
+  chat.innerHTML=`<div class="grp-chat-loading">Loading messages…</div>`;
+
+  // Update active state
+  document.querySelectorAll('.grp-item').forEach(el=>el.classList.remove('grp-item-active'));
+
+  groupUnsubscribe=onSnapshot(
+    query(collection(db,'studyGroups',gid,'messages'),orderBy('ts','asc'),limit(100)),
+    snap=>{
+      const msgs=snap.docs.map(d=>({id:d.id,...d.data()}));
+      const gName=document.querySelector('.grp-item-active .grp-item-name')?.textContent||'Group Chat';
+      chat.innerHTML=`
+        <div class="grp-chat-hd">
+          <span class="grp-chat-title">💬 ${gName}</span>
+          <button class="btn" style="font-size:.7rem;padding:.2rem .6rem" onclick="window._leaveGroup('${gid}')">Leave</button>
+        </div>
+        <div class="grp-msgs" id="grpMsgs">
+          ${msgs.map(m=>{
+            const isMe=m.uid===currentUser?.uid;
+            return `<div class="grp-msg${isMe?' grp-msg-me':''}">
+              ${!isMe?`<div class="grp-msg-name">${m.name||'Student'}</div>`:''}
+              <div class="grp-msg-bubble">${(m.text||'').replace(/</g,'&lt;').replace(/
+/g,'<br>')}</div>
+              <div class="grp-msg-time">${timeAgo({toMillis:()=>m.ts?.toMillis?m.ts.toMillis():Date.now()})}</div>
+            </div>`;
+          }).join('')}
+        </div>
+        <div class="grp-input-row">
+          <textarea class="grp-input" id="grpInput" placeholder="Type a message… (Enter to send)" rows="1"></textarea>
+          <button class="btn btn-amber grp-send-btn" onclick="window._sendGroupMsg('${gid}')">Send</button>
+        </div>`;
+      setTimeout(()=>{const m=document.getElementById('grpMsgs');if(m)m.scrollTop=m.scrollHeight;},50);
+      document.getElementById('grpInput')?.addEventListener('keydown',e=>{
+        if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();window._sendGroupMsg(gid);}
+      });
+    }
+  );
+};
+
+window._sendGroupMsg=async function(gid){
+  const inp=document.getElementById('grpInput');
+  const text=inp?.value.trim();
+  if(!text)return;
+  inp.value='';
+  try{
+    await addDoc(collection(db,'studyGroups',gid,'messages'),{
+      text,uid:currentUser.uid,
+      name:currentUser.displayName||currentUser.email.split('@')[0],
+      ts:serverTimestamp()
+    });
+    // Update last message time on group
+    updateDoc(doc(db,'studyGroups',gid),{lastMsg:text.substring(0,50),lastMsgTs:serverTimestamp()});
+  }catch(e){toast('Send failed: '+e.message,'error');}
+};
+
+window._leaveGroup=async function(gid){
+  if(!confirm('Leave this group?'))return;
+  await updateDoc(doc(db,'studyGroups',gid),{members:arrayRemove(currentUser.uid)});
+  currentGroupId=null;
+  if(groupUnsubscribe){groupUnsubscribe();groupUnsubscribe=null;}
+  toast('Left group','info');
+  renderGroups();
+};
+
+/* ═══════════════════════════════════
    BOOT
 ═══════════════════════════════════ */
 window.addEventListener('DOMContentLoaded',function(){
@@ -1317,7 +1910,7 @@ window.addEventListener('DOMContentLoaded',function(){
       setTimeout(()=>location.reload(),300);
     }
   },{passive:true});
-  bootListeners();syncNavUI();page('home');updateCountdown();
+  bootListeners();syncNavUI();page('home');updateCountdown();updateNotifBadge();checkExamCountdownNotif();scheduleLectureReminders();
   $('fYear').addEventListener('change',function(){$('fBranch').value='';window._filter();});
   ['fBranch','fDiff','fSort'].forEach(id=>$(id)?.addEventListener('change',window._filter));
   ['fSubject','fSearch'].forEach(id=>$(id)?.addEventListener('input',window._filter));
@@ -1762,6 +2355,137 @@ tbody tr:hover td{background:var(--bg);}
 .mob-more-item:active{background:var(--amb);color:#fff;transform:scale(.96);}
 .mob-more-icon{font-size:1.4rem;line-height:1;}
 .mob-more-label{font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:var(--ink2);}
+
+/* ═══ STUDY DASHBOARD CSS ═══ */
+.sd-stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem;margin-bottom:1.25rem;}
+.sd-stat{background:var(--card);border:1px solid var(--cb);border-radius:var(--r);padding:1rem;text-align:center;box-shadow:var(--sh0);}
+.sd-stat-num{font-family:var(--sf);font-size:2rem;font-weight:900;color:var(--am);line-height:1;}
+.sd-stat-lbl{font-size:.72rem;color:var(--ink3);margin-top:.3rem;font-weight:600;}
+.sd-section{background:var(--card);border:1px solid var(--cb);border-radius:var(--r);padding:1rem;margin-bottom:.75rem;box-shadow:var(--sh0);}
+.sd-section-title{font-weight:700;font-size:.85rem;color:var(--ink2);margin-bottom:.75rem;text-transform:uppercase;letter-spacing:.5px;}
+.sd-chips{display:flex;flex-wrap:wrap;gap:.4rem;}
+.sd-chip{padding:.3rem .75rem;border-radius:20px;font-size:.78rem;font-weight:600;border:none;cursor:pointer;}
+.sd-chip-warn{background:var(--rdb);color:var(--rd);}
+.sd-chip-ok{background:var(--gnb);color:var(--gn);}
+.sd-empty{color:var(--ink3);font-size:.85rem;text-align:center;padding:1rem;}
+.sd-subject-list{display:flex;flex-direction:column;gap:.5rem;}
+.sd-subject-row{display:grid;grid-template-columns:1fr 2fr auto;align-items:center;gap:.75rem;}
+.sd-subject-name{font-size:.82rem;font-weight:600;color:var(--ink);}
+.sd-subject-bar-wrap{background:var(--bg2);border-radius:4px;height:6px;}
+.sd-subject-bar{background:var(--am);border-radius:4px;height:6px;transition:width .5s;}
+.sd-subject-meta{font-size:.68rem;color:var(--ink3);white-space:nowrap;}
+.sd-today-list{display:flex;flex-direction:column;gap:.4rem;}
+.sd-today-row{display:flex;align-items:center;gap:.75rem;padding:.5rem .75rem;border-radius:8px;background:var(--bg2);}
+.sd-today-row.sd-done{opacity:.5;}
+.sd-today-row.sd-now{background:var(--amb);border:1px solid var(--am);}
+.sd-today-time{font-size:.72rem;color:var(--ink3);min-width:90px;font-weight:600;}
+.sd-today-sub{font-size:.85rem;font-weight:700;flex:1;}
+.sd-today-badge{font-size:.62rem;font-weight:700;padding:.15rem .45rem;border-radius:20px;}
+.sd-badge-done{background:var(--bg3);color:var(--ink3);}
+.sd-badge-now{background:var(--am);color:#fff;}
+.sd-badge-up{background:var(--blb);color:var(--bl);}
+@media(max-width:600px){.sd-stats-row{grid-template-columns:repeat(2,1fr);}}
+
+/* ═══ EXAM PREDICTOR CSS ═══ */
+.pred-hero{background:linear-gradient(135deg,var(--mast),#2a1f0e);color:#f0e8dc;border-radius:var(--r);padding:1.5rem;margin-bottom:1.25rem;border:1px solid var(--am);}
+.pred-hero-title{font-family:var(--sf);font-size:1.6rem;font-weight:900;color:var(--am);}
+.pred-hero-sub{font-size:.82rem;color:var(--ink3);margin-top:.4rem;line-height:1.5;}
+.pred-section{margin-bottom:1.25rem;}
+.pred-section-title{font-weight:700;font-size:.9rem;color:var(--ink2);margin-bottom:.75rem;text-transform:uppercase;letter-spacing:.5px;padding-bottom:.4rem;border-bottom:2px solid var(--amb);}
+.pred-list{display:flex;flex-direction:column;gap:.6rem;}
+.pred-card{background:var(--card);border:1px solid var(--cb);border-radius:var(--r);padding:.85rem;display:flex;gap:.75rem;align-items:flex-start;box-shadow:var(--sh0);transition:transform .15s;}
+.pred-card:hover{transform:translateY(-1px);box-shadow:var(--sh1);}
+.pred-rank{font-family:var(--sf);font-size:1.4rem;font-weight:900;color:var(--am);min-width:32px;text-align:center;line-height:1.2;}
+.pred-card-body{flex:1;}
+.pred-chips{display:flex;flex-wrap:wrap;gap:.25rem;margin-bottom:.4rem;}
+.pred-qtext{font-size:.88rem;font-weight:600;color:var(--ink);line-height:1.4;}
+.pred-meta{font-size:.7rem;color:var(--ink3);margin-top:.35rem;}
+.pred-prob-wrap{text-align:center;min-width:52px;}
+.pred-prob{font-size:1.1rem;font-weight:900;font-family:var(--sf);}
+.pred-prob-high{color:#2e7d52;}
+.pred-prob-mid{color:var(--am);}
+.pred-prob-low{color:var(--ink3);}
+.pred-prob-lbl{font-size:.6rem;color:var(--ink3);font-weight:600;text-transform:uppercase;}
+.pred-subject-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:.75rem;}
+.pred-sub-card{background:var(--card);border:1px solid var(--cb);border-radius:var(--r);padding:.85rem;box-shadow:var(--sh0);}
+.pred-sub-title{font-weight:700;font-size:.85rem;color:var(--am);margin-bottom:.6rem;padding-bottom:.4rem;border-bottom:1px solid var(--cb);}
+.pred-sub-q{display:flex;gap:.4rem;align-items:flex-start;font-size:.78rem;color:var(--ink2);margin-bottom:.35rem;line-height:1.35;}
+.pred-sub-rank{font-weight:700;color:var(--am);min-width:16px;}
+.pred-sub-rep{font-size:.65rem;color:var(--ink3);white-space:nowrap;margin-left:auto;padding-left:.3rem;}
+
+/* ═══ STUDY GROUPS CSS ═══ */
+.grp-layout{display:grid;grid-template-columns:260px 1fr;gap:1rem;height:calc(100vh - 200px);min-height:500px;}
+.grp-sidebar{background:var(--card);border:1px solid var(--cb);border-radius:var(--r);padding:.75rem;overflow-y:auto;}
+.grp-section-title{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--ink3);padding:.25rem .25rem .4rem;margin-top:.25rem;}
+.grp-item{display:flex;align-items:center;gap:.6rem;padding:.5rem .6rem;border-radius:8px;cursor:pointer;transition:background .15s;}
+.grp-item:hover{background:var(--bg2);}
+.grp-item-active{background:var(--amb)!important;border:1px solid var(--am);}
+.grp-item-icon{font-size:1.3rem;}
+.grp-item-name{font-size:.85rem;font-weight:600;color:var(--ink);}
+.grp-item-meta{font-size:.68rem;color:var(--ink3);}
+.grp-empty{font-size:.82rem;color:var(--ink3);text-align:center;padding:1rem;}
+.grp-chat{background:var(--card);border:1px solid var(--cb);border-radius:var(--r);display:flex;flex-direction:column;overflow:hidden;}
+.grp-chat-empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--ink3);font-size:.9rem;}
+.grp-chat-loading{display:flex;align-items:center;justify-content:center;height:100%;color:var(--ink3);}
+.grp-chat-hd{padding:.7rem 1rem;border-bottom:1px solid var(--cb);display:flex;align-items:center;justify-content:space-between;background:var(--bg2);}
+.grp-chat-title{font-weight:700;font-size:.9rem;}
+.grp-msgs{flex:1;overflow-y:auto;padding:.75rem;display:flex;flex-direction:column;gap:.5rem;}
+.grp-msg{max-width:75%;align-self:flex-start;}
+.grp-msg-me{align-self:flex-end;}
+.grp-msg-name{font-size:.65rem;font-weight:700;color:var(--am);margin-bottom:.15rem;}
+.grp-msg-bubble{background:var(--bg2);border:1px solid var(--cb);border-radius:12px 12px 12px 3px;padding:.5rem .75rem;font-size:.85rem;line-height:1.45;}
+.grp-msg-me .grp-msg-bubble{background:var(--amb);border-color:var(--am);border-radius:12px 12px 3px 12px;}
+.grp-msg-time{font-size:.6rem;color:var(--ink3);margin-top:.15rem;padding:0 .25rem;}
+.grp-input-row{padding:.6rem .75rem;border-top:1px solid var(--cb);display:flex;gap:.5rem;background:var(--bg2);}
+.grp-input{flex:1;background:var(--card);border:1px solid var(--cb);border-radius:8px;padding:.5rem .75rem;font-size:.85rem;resize:none;color:var(--ink);font-family:var(--ss);}
+.grp-send-btn{padding:.5rem 1rem;font-size:.82rem;flex-shrink:0;}
+@media(max-width:700px){
+  .grp-layout{grid-template-columns:1fr;height:auto;}
+  .grp-sidebar{max-height:220px;}
+  .grp-chat{height:460px;}
+}
+
+/* ═══ NOTIFICATION SYSTEM CSS ═══ */
+/* Bell button */
+.notif-bell{position:relative;}
+.notif-badge{position:absolute;top:-4px;right:-4px;background:#e53935;color:#fff;font-size:.55rem;font-weight:800;border-radius:50px;min-width:16px;height:16px;display:flex;align-items:center;justify-content:center;padding:0 3px;border:2px solid var(--mast);}
+
+/* In-app toast notifications */
+#notifToastBox{position:fixed;top:70px;right:1rem;z-index:9999;display:flex;flex-direction:column;gap:.5rem;max-width:340px;pointer-events:none;}
+.notif-toast{background:var(--card);border:1px solid var(--cb);border-left:4px solid var(--am);border-radius:12px;padding:.75rem 1rem;display:flex;gap:.75rem;align-items:flex-start;box-shadow:var(--sh2);transform:translateX(120%);transition:transform .35s cubic-bezier(.4,0,.2,1);pointer-events:all;cursor:default;}
+.notif-toast.notif-toast-show{transform:translateX(0);}
+.notif-toast-icon{font-size:1.4rem;flex-shrink:0;line-height:1;}
+.notif-toast-content{flex:1;min-width:0;}
+.notif-toast-title{font-weight:700;font-size:.82rem;color:var(--ink);margin-bottom:.15rem;}
+.notif-toast-body{font-size:.75rem;color:var(--ink2);line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.notif-toast-close{background:none;border:none;color:var(--ink3);cursor:pointer;font-size:.9rem;padding:0;flex-shrink:0;line-height:1;}
+
+/* Notification panel */
+.notif-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:399;backdrop-filter:blur(2px);}
+.notif-overlay.open{display:block;}
+.notif-panel{position:fixed;top:0;right:-420px;width:min(400px,100vw);height:100vh;background:var(--card);border-left:1px solid var(--cb);z-index:400;display:flex;flex-direction:column;box-shadow:var(--sh2);transition:right .32s cubic-bezier(.4,0,.2,1);}
+.notif-panel.open{right:0;}
+.notif-panel-hd{padding:1rem 1.25rem;border-bottom:1px solid var(--cb);display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-shrink:0;}
+.notif-panel-title{font-family:var(--sf);font-size:1.1rem;font-weight:700;color:var(--ink);}
+.notif-toggle-btn{font-size:.72rem;font-weight:600;padding:.3rem .7rem;border-radius:20px;border:1px solid var(--am);color:var(--am);background:var(--amb);cursor:pointer;white-space:nowrap;}
+.notif-clear-btn{font-size:.7rem;color:var(--ink3);background:none;border:none;cursor:pointer;padding:.2rem .4rem;}
+.notif-close-btn{background:none;border:none;color:var(--ink3);cursor:pointer;font-size:1.1rem;padding:.2rem;}
+.notif-panel-body{flex:1;overflow-y:auto;padding:.75rem;}
+.notif-empty{text-align:center;color:var(--ink3);font-size:.85rem;padding:2rem 1rem;line-height:1.7;}
+.notif-item{display:flex;gap:.75rem;padding:.75rem;border-radius:10px;margin-bottom:.4rem;border:1px solid var(--cb);transition:background .15s;}
+.notif-item:hover{background:var(--bg2);}
+.notif-unread{background:var(--amb);border-color:rgba(180,130,63,.3);}
+.notif-item-icon{font-size:1.3rem;flex-shrink:0;line-height:1;margin-top:.1rem;}
+.notif-item-content{flex:1;min-width:0;}
+.notif-item-title{font-weight:700;font-size:.82rem;color:var(--ink);margin-bottom:.15rem;}
+.notif-item-body{font-size:.75rem;color:var(--ink2);line-height:1.4;}
+.notif-item-ts{font-size:.68rem;color:var(--ink4);margin-top:.25rem;}
+
+@media(max-width:600px){
+  #notifToastBox{top:auto;bottom:80px;right:.75rem;left:.75rem;max-width:100%;}
+  .notif-panel{width:100vw;top:auto;bottom:-100vh;right:0;height:85vh;border-radius:20px 20px 0 0;border-left:none;border-top:1px solid var(--cb);transition:bottom .32s cubic-bezier(.4,0,.2,1);}
+  .notif-panel.open{bottom:0;right:0;}
+}
 @media(max-width:768px){
   .mob-nav{display:grid;}
   .fab{display:none !important;}
@@ -1816,6 +2540,9 @@ input[type="hidden"]{display:none;}
     </div>
     <div class="mast-ctrl">
       <button id="installBtn">📲 Install</button>
+      <button class="ibtn notif-bell" id="notifBellBtn" onclick="window._openNotifPanel()" title="Notifications">
+        🔔<span class="notif-badge" id="notifBadge" style="display:none">0</span>
+      </button>
       <button class="ibtn" id="darkToggle" onclick="window._toggleDark()" title="Toggle theme">🌙</button>
     </div>
     <div id="navUser"></div>
@@ -1830,6 +2557,9 @@ input[type="hidden"]{display:none;}
     <button class="nav-link"       id="nav_pdf"        onclick="page('pdf')">📄 PDF</button>
     <button class="nav-link"       id="navBm"          onclick="page('bookmarks')" style="display:none">🔖 Saved</button>
     <button class="nav-link"       id="navProfile"     onclick="page('profile')" style="display:none">👤 Profile</button>
+    <button class="nav-link"       id="nav_study"      onclick="page('study')" style="display:none">📊 My Study</button>
+    <button class="nav-link"       id="nav_predictor"  onclick="page('predictor')">🎯 Predictor</button>
+    <button class="nav-link"       id="nav_groups"     onclick="page('groups')" style="display:none">👥 Groups</button>
     <button class="nav-link"       id="nav_about"      onclick="page('about')">ℹ About</button>
     <button class="nav-link"       id="navAdmin"       onclick="page('admin')" style="display:none">⚙ Admin</button>
   </nav>
@@ -2363,6 +3093,15 @@ input[type="hidden"]{display:none;}
     <button class="mob-more-item" onclick="page('profile');setMobNav('profile');closeMobMore()">
       <span class="mob-more-icon">👤</span><span class="mob-more-label">Profile</span>
     </button>
+    <button class="mob-more-item" onclick="page('study');setMobNav('study');closeMobMore()">
+      <span class="mob-more-icon">📊</span><span class="mob-more-label">My Study</span>
+    </button>
+    <button class="mob-more-item" onclick="page('predictor');setMobNav('predictor');closeMobMore()">
+      <span class="mob-more-icon">🎯</span><span class="mob-more-label">Predictor</span>
+    </button>
+    <button class="mob-more-item" onclick="page('groups');setMobNav('groups');closeMobMore()">
+      <span class="mob-more-icon">👥</span><span class="mob-more-label">Groups</span>
+    </button>
     <button class="mob-more-item" onclick="page('about');setMobNav('about');closeMobMore()">
       <span class="mob-more-icon">ℹ️</span><span class="mob-more-label">About</span>
     </button>
@@ -2375,8 +3114,52 @@ input[type="hidden"]{display:none;}
 <!-- FAB (desktop only) -->
 <button class="fab" id="fab" onclick="openModal()"><span style="font-size:1rem">&#65291;</span> Post Question</button>
 
+<!-- ═══ STUDY DASHBOARD ═══ -->
+<div id="studyPage" class="page" hidden>
+  <div class="layout-full" style="max-width:900px">
+    <div class="sec-hd"><h2>📊 My Study Dashboard</h2><hr></div>
+    <div id="studyDashContent"><div class="empty-state"><span>📊</span><p>Loading your study data…</p></div></div>
+  </div>
+</div>
+
+<!-- ═══ EXAM PREDICTOR ═══ -->
+<div id="predictorPage" class="page" hidden>
+  <div class="layout-full">
+    <div id="predictorContent"><div class="empty-state"><span>🎯</span><p>Loading predictor…</p></div></div>
+  </div>
+</div>
+
+<!-- ═══ STUDY GROUPS ═══ -->
+<div id="groupsPage" class="page" hidden>
+  <div class="layout-full">
+    <div class="sec-hd"><h2>👥 Study Groups</h2><hr></div>
+    <div id="groupsContent"><div class="empty-state"><span>👥</span><p>Loading groups…</p></div></div>
+  </div>
+</div>
+
 <!-- TOASTS -->
 <div id="toastBox"></div>
+
+<!-- IN-APP NOTIFICATION TOASTS -->
+<div id="notifToastBox"></div>
+
+<!-- NOTIFICATION PANEL OVERLAY -->
+<div class="notif-overlay" id="notifOverlay" onclick="window._closeNotifPanel()"></div>
+
+<!-- NOTIFICATION PANEL -->
+<div class="notif-panel" id="notifPanel">
+  <div class="notif-panel-hd">
+    <div class="notif-panel-title">🔔 Notifications</div>
+    <div style="display:flex;gap:.5rem;align-items:center">
+      <button class="notif-toggle-btn" id="notifToggleBtn" onclick="window._toggleNotif()">🔕 Off — Click to enable</button>
+      <button class="notif-clear-btn" onclick="window._clearNotifs()">Clear all</button>
+      <button class="notif-close-btn" onclick="window._closeNotifPanel()">✕</button>
+    </div>
+  </div>
+  <div class="notif-panel-body" id="notifPanelList">
+    <div class="notif-empty">No notifications yet.<br>Enable notifications to get lecture reminders &amp; updates!</div>
+  </div>
+</div>
 
 <!--
 UPDATED FIRESTORE RULES — paste in Firebase Console → Firestore → Rules:
@@ -2416,6 +3199,17 @@ service cloud.firestore {
     match /reports/{rid} {
       allow create: if request.auth != null;
       allow read, delete: if request.auth.token.email == "amrutvahini4@gmail.com";
+    }
+    match /studyGroups/{gid} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow update: if request.auth != null;
+      allow delete: if request.auth.uid == resource.data.createdBy;
+    }
+    match /studyGroups/{gid}/messages/{mid} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow delete: if request.auth.uid == resource.data.uid;
     }
   }
 }
