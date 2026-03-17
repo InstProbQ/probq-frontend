@@ -76,6 +76,18 @@ let darkMode     = localStorage.getItem('pq_dark')==='true';
 let topicChart   = null, subjectChart = null;
 let EXAM_DATE    = new Date("2026-04-15T09:00:00");
 let flashIdx=0, flashCards=[], qotdQ=null, pinnedIds=[];
+let studyLog = JSON.parse(localStorage.getItem('pq_study_log')||'{}');
+
+function logStudyActivity(subject, correct){
+  if(!subject||subject==='—') return;
+  const key = subject.trim().toLowerCase();
+  if(!studyLog[key]) studyLog[key]={reviewed:0,correct:0,total:0,lastSeen:0,subject};
+  studyLog[key].reviewed++;
+  studyLog[key].total++;
+  if(correct) studyLog[key].correct++;
+  studyLog[key].lastSeen = Date.now();
+  localStorage.setItem('pq_study_log', JSON.stringify(studyLog));
+}
 let userProfile  = JSON.parse(localStorage.getItem('pq_profile')||'{}');
 const $          = id => document.getElementById(id);
 
@@ -1575,19 +1587,7 @@ window._togglePass=function(inputId,btn){const inp=$(inputId);if(inp.type==='pas
 /* ═══════════════════════════════════
    STUDY DASHBOARD
 ═══════════════════════════════════ */
-let studyLog = JSON.parse(localStorage.getItem('pq_study_log')||'{}');
-// studyLog = { subjectKey: { reviewed: N, lastSeen: ts, correct: N, total: N } }
-
-function logStudyActivity(subject, correct){
-  if(!subject||subject==='—') return;
-  const key = subject.trim().toLowerCase();
-  if(!studyLog[key]) studyLog[key]={reviewed:0,correct:0,total:0,lastSeen:0,subject};
-  studyLog[key].reviewed++;
-  studyLog[key].total++;
-  if(correct) studyLog[key].correct++;
-  studyLog[key].lastSeen = Date.now();
-  localStorage.setItem('pq_study_log', JSON.stringify(studyLog));
-}
+// studyLog and logStudyActivity defined at top of script
 
 function renderStudyDash(){
   const el = document.getElementById('studyDashContent');
