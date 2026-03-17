@@ -574,12 +574,13 @@ function renderTimetableGrid(tt){
     const days = schedJson.days.map(d=>d.day);
     const todayName = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date().getDay()];
     const subjectColors = {};
-    const palette = ['#fff3e0','#e8f5e9','#e3f2fd','#f3e5f5','#fce4ec','#e0f7fa','#fffde7','#f1f8e9'];
+    // CSS class-based coloring — works in both light and dark mode
+    const paletteClasses = ['tt-c1','tt-c2','tt-c3','tt-c4','tt-c5','tt-c6','tt-c7','tt-c8'];
     let colorIdx = 0;
     function subjectColor(sub){
       if(!sub) return '';
       const key = sub.trim().toLowerCase();
-      if(!subjectColors[key]) subjectColors[key] = palette[colorIdx++ % palette.length];
+      if(!subjectColors[key]) subjectColors[key] = paletteClasses[colorIdx++ % paletteClasses.length];
       return subjectColors[key];
     }
     const headerRow = `<tr><th class="tt-th-day">Day</th>${allSlots.map(s=>`<th class="tt-th-time">${s}</th>`).join('')}</tr>`;
@@ -588,9 +589,8 @@ function renderTimetableGrid(tt){
       const cells = allSlots.map(slot=>{
         const p = lookup[day]?.[slot];
         if(!p) return `<td class="tt-cell tt-cell-empty">—</td>`;
-        const bg = subjectColor(p.subject);
-        const style = bg ? `style="background:${bg}"` : '';
-        return `<td class="tt-cell" ${style}>
+        const colorClass = subjectColor(p.subject);
+        return `<td class="tt-cell ${colorClass}">
           <div class="tt-cell-sub">${(p.subject||'').replace(/</g,'&lt;')}</div>
           ${p.teacher?`<div class="tt-cell-teacher">${p.teacher.replace(/</g,'&lt;')}</div>`:''}
           ${p.room?`<div class="tt-cell-room">🏫 ${p.room.replace(/</g,'&lt;')}</div>`:''}
@@ -1555,6 +1555,27 @@ body{font-family:var(--ss);background:var(--bg);color:var(--ink);min-height:100v
 .tt-cell-sub{font-weight:600;color:var(--ink);font-size:.78rem;line-height:1.3;}
 .tt-cell-teacher{font-size:.65rem;color:var(--ink3);margin-top:.15rem;}
 .tt-cell-room{font-size:.62rem;color:var(--ink3);}
+/* Timetable subject color classes — light mode */
+.tt-c1{background:#fff3e0;}.tt-c2{background:#e8f5e9;}.tt-c3{background:#e3f2fd;}
+.tt-c4{background:#f3e5f5;}.tt-c5{background:#fce4ec;}.tt-c6{background:#e0f7fa;}
+.tt-c7{background:#fffde7;}.tt-c8{background:#f1f8e9;}
+/* Dark mode overrides — muted tones so text stays readable */
+[data-theme="dark"] .tt-c1{background:rgba(255,183,77,.12);}
+[data-theme="dark"] .tt-c2{background:rgba(76,175,116,.12);}
+[data-theme="dark"] .tt-c3{background:rgba(90,143,224,.12);}
+[data-theme="dark"] .tt-c4{background:rgba(180,130,200,.12);}
+[data-theme="dark"] .tt-c5{background:rgba(224,90,120,.12);}
+[data-theme="dark"] .tt-c6{background:rgba(77,200,220,.12);}
+[data-theme="dark"] .tt-c7{background:rgba(220,200,77,.12);}
+[data-theme="dark"] .tt-c8{background:rgba(130,200,100,.12);}
+/* Force text color in dark mode for all timetable cells */
+[data-theme="dark"] .tt-cell-sub{color:var(--ink);}
+[data-theme="dark"] .tt-cell-teacher{color:var(--ink3);}
+[data-theme="dark"] .tt-cell-room{color:var(--ink3);}
+[data-theme="dark"] .tt-day-label{color:var(--ink2);background:var(--bg2);}
+[data-theme="dark"] .tt-row-today td{background:rgba(212,164,90,.08)!important;}
+[data-theme="dark"] .tt-cell-empty{color:var(--ink4);}
+[data-theme="dark"] .tt-grid-wrap .tt-ai-title{color:var(--bl);}
 .tt-notes{margin-top:.6rem;font-size:.75rem;color:var(--ink3);padding:.5rem .75rem;background:var(--bg2);border-radius:6px;}
 /* Extract button */
 .tt-extract-btn{padding:.3rem .8rem;font-size:.75rem;background:var(--blb);color:var(--bl);border:1px solid rgba(42,95,173,.3);border-radius:6px;cursor:pointer;font-weight:600;transition:all .2s;}
