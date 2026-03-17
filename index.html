@@ -565,11 +565,11 @@ function renderTimetableGrid(tt){
         if(!allSlots.includes(p.time)) allSlots.push(p.time);
       });
     });
-    // Build lookup: day -> time -> subject
+    // Build lookup: day -> time -> {subject, dayIdx, periodIdx}
     const lookup = {};
-    schedJson.days.forEach(day=>{
+    schedJson.days.forEach((day,di)=>{
       lookup[day.day]={};
-      (day.periods||[]).forEach(p=>{ lookup[day.day][p.time]=p; });
+      (day.periods||[]).forEach((p,pi)=>{ lookup[day.day][p.time]={...p,dayIdx:di,periodIdx:pi}; });
     });
     const days = schedJson.days.map(d=>d.day);
     const todayName = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date().getDay()];
@@ -583,6 +583,7 @@ function renderTimetableGrid(tt){
       if(!subjectColors[key]) subjectColors[key] = paletteClasses[colorIdx++ % paletteClasses.length];
       return subjectColors[key];
     }
+    const ttId = tt.id || '';
     const headerRow = `<tr><th class="tt-th-day">Day</th>${allSlots.map(s=>`<th class="tt-th-time">${s}</th>`).join('')}</tr>`;
     const bodyRows = days.map(day=>{
       const isToday = day.toLowerCase().includes(todayName.toLowerCase().slice(0,3));
@@ -590,10 +591,12 @@ function renderTimetableGrid(tt){
         const p = lookup[day]?.[slot];
         if(!p) return `<td class="tt-cell tt-cell-empty">—</td>`;
         const colorClass = subjectColor(p.subject);
-        return `<td class="tt-cell ${colorClass}">
+        const editAttr = (isAdmin && ttId) ? `onclick="window._editTTCell('${ttId}',${p.dayIdx},${p.periodIdx},'${(p.subject||'').replace(/'/g,"\'")}')" title="Click to edit" style="cursor:pointer"` : '';
+        return `<td class="tt-cell ${colorClass}" ${editAttr}>
           <div class="tt-cell-sub">${(p.subject||'').replace(/</g,'&lt;')}</div>
           ${p.teacher?`<div class="tt-cell-teacher">${p.teacher.replace(/</g,'&lt;')}</div>`:''}
           ${p.room?`<div class="tt-cell-room">🏫 ${p.room.replace(/</g,'&lt;')}</div>`:''}
+          ${(isAdmin&&ttId)?'<div class="tt-cell-edit">✏️</div>':''}
         </td>`;
       }).join('');
       return `<tr class="${isToday?'tt-row-today':''}">
@@ -779,6 +782,29 @@ window._uploadTimetable=async function(){
 };
 
 window._deleteTT=async function(id){if(!isAdmin||!confirm('Delete?'))return;await deleteDoc(doc(db,'timetables',id));toast('Deleted','info');};
+
+/* ═══════════════════════════════════
+   TIMETABLE MANUAL EDITOR (Admin)
+═══════════════════════════════════ */
+window._editTTCell = function(ttId, dayIdx, periodIdx, currentVal){
+  const newVal = prompt('Edit subject/content:', currentVal);
+  if(newVal === null) return; // cancelled
+  const tt = allTimetables.find(t=>t.id===ttId);
+  if(!tt || !tt.aiScheduleJson) return;
+  let sched = typeof tt.aiScheduleJson==='string' ? JSON.parse(tt.aiScheduleJson) : JSON.parse(JSON.stringify(tt.aiScheduleJson));
+  if(sched.days[dayIdx] && sched.days[dayIdx].periods[periodIdx]){
+    sched.days[dayIdx].periods[periodIdx].subject = newVal;
+    // Update in-memory
+    allTimetables.find(t=>t.id===ttId).aiScheduleJson = sched;
+    // Re-render immediately
+    const resultArea = document.getElementById('ttresult-'+ttId);
+    if(resultArea){ resultArea.innerHTML = renderTimetableGrid({aiScheduleJson:sched, aiSchedule:tt.aiSchedule}); }
+    // Save to Firestore
+    updateDoc(doc(db,'timetables',ttId),{ aiScheduleJson: sched, updatedAt: serverTimestamp() })
+      .then(()=>toast('Cell updated ✅','success'))
+      .catch(e=>toast('Save failed: '+e.message,'error'));
+  }
+};
 function openTTModal(){if(!currentUser){page('auth');return;}$('ttModal').classList.add('open');document.body.style.overflow='hidden';}
 function closeTTModal(){$('ttModal').classList.remove('open');document.body.style.overflow='';}
 window.openTTModal=openTTModal;window.closeTTModal=closeTTModal;
@@ -1576,6 +1602,12 @@ body{font-family:var(--ss);background:var(--bg);color:var(--ink);min-height:100v
 [data-theme="dark"] .tt-row-today td{background:rgba(212,164,90,.08)!important;}
 [data-theme="dark"] .tt-cell-empty{color:var(--ink4);}
 [data-theme="dark"] .tt-grid-wrap .tt-ai-title{color:var(--bl);}
+/* Admin edit indicator on timetable cells */
+.tt-cell-edit{font-size:.55rem;opacity:0;position:absolute;top:2px;right:3px;transition:opacity .15s;}
+.tt-cell{position:relative;}
+.tt-cell:hover .tt-cell-edit{opacity:.6;}
+[data-theme="dark"] .tt-cell:hover{outline:1px solid var(--amb);}
+.tt-cell:hover{outline:1px solid var(--am);outline-offset:-1px;}
 .tt-notes{margin-top:.6rem;font-size:.75rem;color:var(--ink3);padding:.5rem .75rem;background:var(--bg2);border-radius:6px;}
 /* Extract button */
 .tt-extract-btn{padding:.3rem .8rem;font-size:.75rem;background:var(--blb);color:var(--bl);border:1px solid rgba(42,95,173,.3);border-radius:6px;cursor:pointer;font-weight:600;transition:all .2s;}
